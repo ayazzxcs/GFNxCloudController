@@ -12,18 +12,12 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Wifi
-import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -36,9 +30,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
@@ -54,6 +52,15 @@ import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
+/**
+ * Exact GeForce NOW on-screen controller overlay matching the reference screenshot:
+ * - Floating top-center controls: [ ◀ ] ( 🎮▼ ) [ ▶ ]
+ * - Left side: LT (top-left edge), LB (adjacent to LT), D-pad (4 circular buttons with chevrons),
+ *   L3 (bottom-left corner), and large Left Analog Stick with dual concentric rings & dotted knob.
+ * - Right side: RT (top-right edge), RB (adjacent to RT), ABXY diamond (Y, X, B, A),
+ *   R3 (bottom-right corner), and large Right Analog Stick with dual concentric rings & dotted knob.
+ * - Symmetrical, clean, dark-glass transparent design with crisp white borders and tactile grips.
+ */
 @Composable
 fun GFNControllerOverlay(
     stateManager: ControllerStateManager,
@@ -64,7 +71,6 @@ fun GFNControllerOverlay(
     onOpenSettings: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    // Keep local track of pressed states for immediate visual feedback
     val pressedMap = remember { mutableStateMapOf<Int, Boolean>() }
 
     fun handleButtonChange(btnIndex: Int, isPressed: Boolean) {
@@ -81,344 +87,289 @@ fun GFNControllerOverlay(
             .fillMaxSize()
             .alpha(opacity)
     ) {
-        val screenWidth = maxWidth
         val screenHeight = maxHeight
+        val centerY = screenHeight / 2
 
         // ==========================================
-        // 1. TOP STATUS BAR (GeForce NOW style compact header)
+        // 1. TOP-CENTER CONTROLS [ ◀ ] ( 🎮▼ ) [ ▶ ]
         // ==========================================
         Row(
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .padding(top = 10.dp)
-                .background(
-                    color = Color(0xC0141416),
-                    shape = CircleShape
-                )
-                .border(
-                    width = 1.dp,
-                    color = Color.White.copy(alpha = 0.12f),
-                    shape = CircleShape
-                )
-                .padding(horizontal = 14.dp, vertical = 5.dp),
+                .padding(top = 22.dp)
+                .testTag("top_center_controls"),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Xbox branding
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.testTag("status_xbox_branding")
-            ) {
-                XboxLogoIcon(size = 22.dp)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "Xbox Cloud",
-                    color = Color.White,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
-                    letterSpacing = 0.2.sp
-                )
-            }
+            // View button (Left arrow pill)
+            PillIconButton(
+                direction = ArrowDirection.LEFT,
+                isPressed = pressedMap[GamepadConstants.BTN_VIEW] == true,
+                onPressChange = { handleButtonChange(GamepadConstants.BTN_VIEW, it) },
+                testTag = "btn_view"
+            )
 
-            Spacer(modifier = Modifier.width(16.dp))
+            Spacer(modifier = Modifier.width(14.dp))
 
-            // Center buttons: View (◀), Xbox Guide, Menu (▶)
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.testTag("center_nav_buttons")
-            ) {
-                // View / Back button (Pill with left triangle)
-                PillIconButton(
-                    iconText = "◀",
-                    isPressed = pressedMap[GamepadConstants.BTN_VIEW] == true,
-                    onPressChange = { handleButtonChange(GamepadConstants.BTN_VIEW, it) },
-                    testTag = "btn_view"
-                )
+            // Center GeForce NOW Menu / Guide button (Controller + dropdown triangle)
+            GfnGamepadMenuButton(
+                isPressed = pressedMap[GamepadConstants.BTN_GUIDE] == true,
+                onPressChange = { handleButtonChange(GamepadConstants.BTN_GUIDE, it) },
+                onOpenSettings = onOpenSettings,
+                testTag = "btn_guide"
+            )
 
-                Spacer(modifier = Modifier.width(10.dp))
+            Spacer(modifier = Modifier.width(14.dp))
 
-                // Xbox Guide button (Center glowing circle)
-                XboxGuideButton(
-                    isPressed = pressedMap[GamepadConstants.BTN_GUIDE] == true,
-                    onPressChange = { handleButtonChange(GamepadConstants.BTN_GUIDE, it) },
-                    testTag = "btn_guide"
-                )
-
-                Spacer(modifier = Modifier.width(10.dp))
-
-                // Menu / Start button (Pill with right triangle)
-                PillIconButton(
-                    iconText = "▶",
-                    isPressed = pressedMap[GamepadConstants.BTN_MENU] == true,
-                    onPressChange = { handleButtonChange(GamepadConstants.BTN_MENU, it) },
-                    testTag = "btn_menu"
-                )
-            }
-
-            Spacer(modifier = Modifier.width(16.dp))
-
-            // Network info & Settings gear
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.testTag("status_network_info")
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Wifi,
-                    contentDescription = "Wi-Fi status",
-                    tint = Color.White.copy(alpha = 0.9f),
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(5.dp))
-                Text(
-                    text = "$pingMs ms",
-                    color = Color.White.copy(alpha = 0.9f),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Normal
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                IconButton(
-                    onClick = onOpenSettings,
-                    modifier = Modifier
-                        .size(32.dp)
-                        .testTag("settings_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Settings,
-                        contentDescription = "Settings",
-                        tint = Color.White.copy(alpha = 0.9f),
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-            }
+            // Menu button (Right arrow pill)
+            PillIconButton(
+                direction = ArrowDirection.RIGHT,
+                isPressed = pressedMap[GamepadConstants.BTN_MENU] == true,
+                onPressChange = { handleButtonChange(GamepadConstants.BTN_MENU, it) },
+                testTag = "btn_menu"
+            )
         }
+
+        // Top-right network broadcast indicator ((•))
+        NetworkBroadcastIndicator(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(end = 18.dp, top = 14.dp)
+        )
 
         // ==========================================
         // 2. LEFT SIDE CONTROLS
         // ==========================================
 
-        // LT Button (Top-left, placed upward at natural shoulder position)
+        // LT Button (Top-left corner)
         CircularGamepadButton(
             text = "LT",
             isPressed = pressedMap[GamepadConstants.BTN_LT] == true,
-            size = 56.dp,
+            size = 60.dp,
+            fontSize = 18.sp,
             onPressChange = { handleButtonChange(GamepadConstants.BTN_LT, it) },
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .padding(start = 28.dp, top = 16.dp)
+                .padding(start = 24.dp, top = 22.dp)
                 .testTag("btn_lt")
         )
 
-        // LB Button (Adjacent to LT, placed upward)
+        // LB Button (Adjacent to LT)
         CircularGamepadButton(
             text = "LB",
             isPressed = pressedMap[GamepadConstants.BTN_LB] == true,
-            size = 56.dp,
+            size = 60.dp,
+            fontSize = 18.sp,
             onPressChange = { handleButtonChange(GamepadConstants.BTN_LB, it) },
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .padding(start = 98.dp, top = 16.dp)
+                .padding(start = 120.dp, top = 22.dp)
                 .testTag("btn_lb")
         )
 
-        // D-Pad (Up, Left, Right, Down)
-        val dpadCenterOffset = Offset(105f, 0f) // dp offsets from start
-        Box(
-            modifier = Modifier
-                .align(Alignment.CenterStart)
-                .padding(start = 40.dp)
-                .size(170.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            // Up
-            CircularGamepadButton(
-                text = "∧",
-                isPressed = pressedMap[GamepadConstants.BTN_DPAD_UP] == true,
-                size = 50.dp,
-                fontSize = 20.sp,
-                onPressChange = { handleButtonChange(GamepadConstants.BTN_DPAD_UP, it) },
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .testTag("btn_dpad_up")
-            )
-            // Down
-            CircularGamepadButton(
-                text = "∨",
-                isPressed = pressedMap[GamepadConstants.BTN_DPAD_DOWN] == true,
-                size = 50.dp,
-                fontSize = 20.sp,
-                onPressChange = { handleButtonChange(GamepadConstants.BTN_DPAD_DOWN, it) },
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .testTag("btn_dpad_down")
-            )
-            // Left
-            CircularGamepadButton(
-                text = "<",
-                isPressed = pressedMap[GamepadConstants.BTN_DPAD_LEFT] == true,
-                size = 50.dp,
-                fontSize = 20.sp,
-                onPressChange = { handleButtonChange(GamepadConstants.BTN_DPAD_LEFT, it) },
-                modifier = Modifier
-                    .align(Alignment.CenterStart)
-                    .testTag("btn_dpad_left")
-            )
-            // Right
-            CircularGamepadButton(
-                text = ">",
-                isPressed = pressedMap[GamepadConstants.BTN_DPAD_RIGHT] == true,
-                size = 50.dp,
-                fontSize = 20.sp,
-                onPressChange = { handleButtonChange(GamepadConstants.BTN_DPAD_RIGHT, it) },
-                modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .testTag("btn_dpad_right")
-            )
-        }
+        // D-Pad Cross (4 separate circular buttons with chevrons)
+        // Center of D-Pad is placed at start = 84.dp, vertically centered
+        val dpadCenterX = 84.dp
+        val dpadSpacing = 56.dp
 
-        // Left Analog Stick (Dual concentric rings with dotted grip knob)
+        // Up: ∧
+        ChevronGamepadButton(
+            direction = ChevronDirection.UP,
+            isPressed = pressedMap[GamepadConstants.BTN_DPAD_UP] == true,
+            size = 54.dp,
+            onPressChange = { handleButtonChange(GamepadConstants.BTN_DPAD_UP, it) },
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(start = dpadCenterX, top = centerY - dpadSpacing - 27.dp)
+                .testTag("btn_dpad_up")
+        )
+
+        // Down: ∨
+        ChevronGamepadButton(
+            direction = ChevronDirection.DOWN,
+            isPressed = pressedMap[GamepadConstants.BTN_DPAD_DOWN] == true,
+            size = 54.dp,
+            onPressChange = { handleButtonChange(GamepadConstants.BTN_DPAD_DOWN, it) },
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(start = dpadCenterX, top = centerY + dpadSpacing - 27.dp)
+                .testTag("btn_dpad_down")
+        )
+
+        // Left: < (At start = 24.dp, directly below LT)
+        ChevronGamepadButton(
+            direction = ChevronDirection.LEFT,
+            isPressed = pressedMap[GamepadConstants.BTN_DPAD_LEFT] == true,
+            size = 54.dp,
+            onPressChange = { handleButtonChange(GamepadConstants.BTN_DPAD_LEFT, it) },
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(start = 24.dp, top = centerY - 27.dp)
+                .testTag("btn_dpad_left")
+        )
+
+        // Right: >
+        ChevronGamepadButton(
+            direction = ChevronDirection.RIGHT,
+            isPressed = pressedMap[GamepadConstants.BTN_DPAD_RIGHT] == true,
+            size = 54.dp,
+            onPressChange = { handleButtonChange(GamepadConstants.BTN_DPAD_RIGHT, it) },
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(start = dpadCenterX + dpadSpacing + 4.dp, top = centerY - 27.dp)
+                .testTag("btn_dpad_right")
+        )
+
+        // L3 Button (Bottom-left corner, directly below Left D-pad and LT)
+        CircularGamepadButton(
+            text = "L3",
+            isPressed = pressedMap[GamepadConstants.BTN_L3] == true,
+            size = 56.dp,
+            fontSize = 17.sp,
+            onPressChange = { handleButtonChange(GamepadConstants.BTN_L3, it) },
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(start = 24.dp, bottom = 22.dp)
+                .testTag("btn_l3")
+        )
+
+        // Left Analog Stick (Dual concentric rings + tactile dot-matrix knob)
         AnalogThumbStick(
             isLeftStick = true,
             onStickMove = { x, y -> stateManager.setStick(true, x, y) },
             modifier = Modifier
                 .align(Alignment.BottomStart)
-                .padding(start = 155.dp, bottom = 24.dp)
-                .size(150.dp)
+                .padding(start = 142.dp, bottom = 10.dp)
+                .size(168.dp)
                 .testTag("left_analog_stick")
-        )
-
-        // L3 Button (Bottom-left corner)
-        CircularGamepadButton(
-            text = "L3",
-            isPressed = pressedMap[GamepadConstants.BTN_L3] == true,
-            size = 54.dp,
-            onPressChange = { handleButtonChange(GamepadConstants.BTN_L3, it) },
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(start = 40.dp, bottom = 28.dp)
-                .testTag("btn_l3")
         )
 
         // ==========================================
         // 3. RIGHT SIDE CONTROLS
         // ==========================================
 
-        // RB Button (Adjacent to RT, placed upward)
-        CircularGamepadButton(
-            text = "RB",
-            isPressed = pressedMap[GamepadConstants.BTN_RB] == true,
-            size = 56.dp,
-            onPressChange = { handleButtonChange(GamepadConstants.BTN_RB, it) },
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(end = 98.dp, top = 16.dp)
-                .testTag("btn_rb")
-        )
-
-        // RT Button (Top-right, placed upward at natural shoulder position)
+        // RT Button (Top-right corner)
         CircularGamepadButton(
             text = "RT",
             isPressed = pressedMap[GamepadConstants.BTN_RT] == true,
-            size = 56.dp,
+            size = 60.dp,
+            fontSize = 18.sp,
             onPressChange = { handleButtonChange(GamepadConstants.BTN_RT, it) },
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .padding(end = 28.dp, top = 16.dp)
+                .padding(end = 24.dp, top = 22.dp)
                 .testTag("btn_rt")
         )
 
-        // ABXY Diamond (Y on top, A on bottom, X on left, B on right)
-        Box(
+        // RB Button (Adjacent to RT)
+        CircularGamepadButton(
+            text = "RB",
+            isPressed = pressedMap[GamepadConstants.BTN_RB] == true,
+            size = 60.dp,
+            fontSize = 18.sp,
+            onPressChange = { handleButtonChange(GamepadConstants.BTN_RB, it) },
             modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .padding(end = 40.dp)
-                .size(170.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            // Y (Top)
-            CircularGamepadButton(
-                text = "Y",
-                isPressed = pressedMap[GamepadConstants.BTN_Y] == true,
-                size = 50.dp,
-                fontSize = 18.sp,
-                onPressChange = { handleButtonChange(GamepadConstants.BTN_Y, it) },
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .testTag("btn_y")
-            )
-            // A (Bottom)
-            CircularGamepadButton(
-                text = "A",
-                isPressed = pressedMap[GamepadConstants.BTN_A] == true,
-                size = 50.dp,
-                fontSize = 18.sp,
-                onPressChange = { handleButtonChange(GamepadConstants.BTN_A, it) },
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .testTag("btn_a")
-            )
-            // X (Left)
-            CircularGamepadButton(
-                text = "X",
-                isPressed = pressedMap[GamepadConstants.BTN_X] == true,
-                size = 50.dp,
-                fontSize = 18.sp,
-                onPressChange = { handleButtonChange(GamepadConstants.BTN_X, it) },
-                modifier = Modifier
-                    .align(Alignment.CenterStart)
-                    .testTag("btn_x")
-            )
-            // B (Right)
-            CircularGamepadButton(
-                text = "B",
-                isPressed = pressedMap[GamepadConstants.BTN_B] == true,
-                size = 50.dp,
-                fontSize = 18.sp,
-                onPressChange = { handleButtonChange(GamepadConstants.BTN_B, it) },
-                modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .testTag("btn_b")
-            )
-        }
+                .align(Alignment.TopEnd)
+                .padding(end = 120.dp, top = 22.dp)
+                .testTag("btn_rb")
+        )
 
-        // Right Analog Stick (Dual concentric rings with dotted grip knob)
+        // ABXY Diamond
+        // Center of ABXY diamond is at end = 84.dp, vertically centered
+        val abxyCenterEnd = 84.dp
+        val abxySpacing = 56.dp
+
+        // Y (Top)
+        CircularGamepadButton(
+            text = "Y",
+            isPressed = pressedMap[GamepadConstants.BTN_Y] == true,
+            size = 54.dp,
+            fontSize = 20.sp,
+            onPressChange = { handleButtonChange(GamepadConstants.BTN_Y, it) },
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(end = abxyCenterEnd, top = centerY - abxySpacing - 27.dp)
+                .testTag("btn_y")
+        )
+
+        // A (Bottom)
+        CircularGamepadButton(
+            text = "A",
+            isPressed = pressedMap[GamepadConstants.BTN_A] == true,
+            size = 54.dp,
+            fontSize = 20.sp,
+            onPressChange = { handleButtonChange(GamepadConstants.BTN_A, it) },
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(end = abxyCenterEnd, top = centerY + abxySpacing - 27.dp)
+                .testTag("btn_a")
+        )
+
+        // X (Left)
+        CircularGamepadButton(
+            text = "X",
+            isPressed = pressedMap[GamepadConstants.BTN_X] == true,
+            size = 54.dp,
+            fontSize = 20.sp,
+            onPressChange = { handleButtonChange(GamepadConstants.BTN_X, it) },
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(end = abxyCenterEnd + abxySpacing + 4.dp, top = centerY - 27.dp)
+                .testTag("btn_x")
+        )
+
+        // B (Right, at end = 24.dp directly below RT)
+        CircularGamepadButton(
+            text = "B",
+            isPressed = pressedMap[GamepadConstants.BTN_B] == true,
+            size = 54.dp,
+            fontSize = 20.sp,
+            onPressChange = { handleButtonChange(GamepadConstants.BTN_B, it) },
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(end = 24.dp, top = centerY - 27.dp)
+                .testTag("btn_b")
+        )
+
+        // R3 Button (Bottom-right corner, directly below B and RT)
+        CircularGamepadButton(
+            text = "R3",
+            isPressed = pressedMap[GamepadConstants.BTN_R3] == true,
+            size = 56.dp,
+            fontSize = 17.sp,
+            onPressChange = { handleButtonChange(GamepadConstants.BTN_R3, it) },
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 24.dp, bottom = 22.dp)
+                .testTag("btn_r3")
+        )
+
+        // Right Analog Stick (Dual concentric rings + tactile dot-matrix knob)
         AnalogThumbStick(
             isLeftStick = false,
             onStickMove = { x, y -> stateManager.setStick(false, x, y) },
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .padding(end = 155.dp, bottom = 24.dp)
-                .size(150.dp)
+                .padding(end = 142.dp, bottom = 10.dp)
+                .size(168.dp)
                 .testTag("right_analog_stick")
-        )
-
-        // R3 Button (Bottom-right corner)
-        CircularGamepadButton(
-            text = "R3",
-            isPressed = pressedMap[GamepadConstants.BTN_R3] == true,
-            size = 54.dp,
-            onPressChange = { handleButtonChange(GamepadConstants.BTN_R3, it) },
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = 40.dp, bottom = 28.dp)
-                .testTag("btn_r3")
         )
     }
 }
 
 /**
- * Clean circular button matching the GFN overlay in the reference image.
+ * Clean circular button matching the GeForce NOW overlay aesthetic.
  */
 @Composable
 fun CircularGamepadButton(
     text: String,
     isPressed: Boolean,
     size: Dp = 56.dp,
-    fontSize: androidx.compose.ui.unit.TextUnit = 16.sp,
+    fontSize: androidx.compose.ui.unit.TextUnit = 18.sp,
     onPressChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val borderColor = if (isPressed) Color.White else Color(0x80FFFFFF)
-    val bgColor = if (isPressed) Color(0x66FFFFFF) else Color(0x2E0F172A)
-    val textColor = Color.White
+    val borderColor = if (isPressed) Color.White else Color(0x75FFFFFF)
+    val bgColor = if (isPressed) Color(0x66FFFFFF) else Color(0x30000000)
 
     Box(
         contentAlignment = Alignment.Center,
@@ -448,35 +399,38 @@ fun CircularGamepadButton(
     ) {
         Text(
             text = text,
-            color = textColor,
+            color = Color(0xF5FFFFFF),
             fontSize = fontSize,
-            fontWeight = FontWeight.Bold
+            fontWeight = FontWeight.Medium
         )
     }
 }
 
+enum class ChevronDirection { UP, DOWN, LEFT, RIGHT }
+
 /**
- * Capsule / stadium button for View (◀) and Menu (▶) buttons.
+ * Circular D-Pad button drawing the crisp vector chevrons from the GeForce NOW overlay.
  */
 @Composable
-fun PillIconButton(
-    iconText: String,
+fun ChevronGamepadButton(
+    direction: ChevronDirection,
     isPressed: Boolean,
+    size: Dp = 54.dp,
     onPressChange: (Boolean) -> Unit,
-    testTag: String
+    modifier: Modifier = Modifier
 ) {
-    val borderColor = if (isPressed) Color.White else Color(0x80FFFFFF)
-    val bgColor = if (isPressed) Color(0x66FFFFFF) else Color(0x2E0F172A)
+    val borderColor = if (isPressed) Color.White else Color(0x75FFFFFF)
+    val bgColor = if (isPressed) Color(0x66FFFFFF) else Color(0x30000000)
+    val strokeColor = if (isPressed) Color.White else Color(0xF5FFFFFF)
 
     Box(
         contentAlignment = Alignment.Center,
-        modifier = Modifier
-            .size(width = 56.dp, height = 30.dp)
-            .clip(RoundedCornerShape(15.dp))
-            .background(bgColor, RoundedCornerShape(15.dp))
-            .border(1.5.dp, borderColor, RoundedCornerShape(15.dp))
-            .testTag(testTag)
-            .pointerInput(iconText) {
+        modifier = modifier
+            .size(size)
+            .clip(CircleShape)
+            .background(bgColor, CircleShape)
+            .border(1.5.dp, borderColor, CircleShape)
+            .pointerInput(direction) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     down.consume()
@@ -495,30 +449,132 @@ fun PillIconButton(
                 }
             }
     ) {
-        Text(
-            text = iconText,
-            color = Color.White,
-            fontSize = 14.sp
-        )
+        Canvas(modifier = Modifier.size(size * 0.42f)) {
+            val w = this.size.width
+            val h = this.size.height
+            val strokeW = 2.4.dp.toPx()
+
+            val path = Path()
+            when (direction) {
+                ChevronDirection.UP -> {
+                    path.moveTo(0f, h * 0.72f)
+                    path.lineTo(w / 2f, h * 0.18f)
+                    path.lineTo(w, h * 0.72f)
+                }
+                ChevronDirection.DOWN -> {
+                    path.moveTo(0f, h * 0.28f)
+                    path.lineTo(w / 2f, h * 0.82f)
+                    path.lineTo(w, h * 0.28f)
+                }
+                ChevronDirection.LEFT -> {
+                    path.moveTo(w * 0.72f, 0f)
+                    path.lineTo(w * 0.18f, h / 2f)
+                    path.lineTo(w * 0.72f, h)
+                }
+                ChevronDirection.RIGHT -> {
+                    path.moveTo(w * 0.28f, 0f)
+                    path.lineTo(w * 0.82f, h / 2f)
+                    path.lineTo(w * 0.28f, h)
+                }
+            }
+
+            drawPath(
+                path = path,
+                color = strokeColor,
+                style = Stroke(
+                    width = strokeW,
+                    cap = StrokeCap.Round,
+                    join = StrokeJoin.Round
+                )
+            )
+        }
     }
 }
 
+enum class ArrowDirection { LEFT, RIGHT }
+
 /**
- * Center Xbox Guide circular button with the glowing ring and white Xbox sphere logo.
+ * Capsule / stadium pill button for View (◀) and Menu (▶) buttons.
  */
 @Composable
-fun XboxGuideButton(
+fun PillIconButton(
+    direction: ArrowDirection,
     isPressed: Boolean,
     onPressChange: (Boolean) -> Unit,
     testTag: String
 ) {
-    val borderColor = if (isPressed) Color.White else Color(0x99FFFFFF)
-    val bgColor = if (isPressed) Color(0x66FFFFFF) else Color(0x2E0F172A)
+    val borderColor = if (isPressed) Color.White else Color(0x75FFFFFF)
+    val bgColor = if (isPressed) Color(0x66FFFFFF) else Color(0x30000000)
+    val arrowColor = if (isPressed) Color.White else Color(0xF5FFFFFF)
 
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
-            .size(42.dp)
+            .size(width = 54.dp, height = 32.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(bgColor, RoundedCornerShape(16.dp))
+            .border(1.5.dp, borderColor, RoundedCornerShape(16.dp))
+            .testTag(testTag)
+            .pointerInput(direction) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    down.consume()
+                    onPressChange(true)
+                    val pointerId = down.id
+
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == pointerId }
+                        if (change == null || !change.pressed) {
+                            onPressChange(false)
+                            break
+                        }
+                        change.consume()
+                    }
+                }
+            }
+    ) {
+        Canvas(modifier = Modifier.size(12.dp)) {
+            val w = this.size.width
+            val h = this.size.height
+            val path = Path()
+
+            if (direction == ArrowDirection.LEFT) {
+                path.moveTo(w, 0f)
+                path.lineTo(0f, h / 2f)
+                path.lineTo(w, h)
+                path.close()
+            } else {
+                path.moveTo(0f, 0f)
+                path.lineTo(w, h / 2f)
+                path.lineTo(0f, h)
+                path.close()
+            }
+
+            drawPath(path = path, color = arrowColor, style = Fill)
+        }
+    }
+}
+
+/**
+ * Center GeForce NOW gamepad circular button:
+ * Features the controller silhouette with the downward dropdown triangle below it.
+ * Tapping opens the quick settings/overlay control menu and triggers Guide input.
+ */
+@Composable
+fun GfnGamepadMenuButton(
+    isPressed: Boolean,
+    onPressChange: (Boolean) -> Unit,
+    onOpenSettings: () -> Unit,
+    testTag: String
+) {
+    val borderColor = if (isPressed) Color.White else Color(0x75FFFFFF)
+    val bgColor = if (isPressed) Color(0x66FFFFFF) else Color(0x30000000)
+
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(44.dp)
             .clip(CircleShape)
             .background(bgColor, CircleShape)
             .border(1.5.dp, borderColor, CircleShape)
@@ -535,6 +591,7 @@ fun XboxGuideButton(
                         val change = event.changes.firstOrNull { it.id == pointerId }
                         if (change == null || !change.pressed) {
                             onPressChange(false)
+                            onOpenSettings()
                             break
                         }
                         change.consume()
@@ -542,59 +599,149 @@ fun XboxGuideButton(
                 }
             }
     ) {
-        XboxLogoIcon(size = 24.dp)
+        Canvas(modifier = Modifier.size(24.dp)) {
+            val w = size.width
+            val h = size.height
+            val iconColor = Color.White
+
+            // Draw game controller outline
+            val ctrlBody = Path().apply {
+                // Top curve
+                moveTo(w * 0.22f, h * 0.24f)
+                lineTo(w * 0.78f, h * 0.24f)
+                // Right shoulder
+                quadraticTo(w * 0.94f, h * 0.28f, w * 0.92f, h * 0.52f)
+                // Right grip
+                quadraticTo(w * 0.90f, h * 0.76f, w * 0.76f, h * 0.74f)
+                // Right inner crook
+                quadraticTo(w * 0.65f, h * 0.70f, w * 0.58f, h * 0.54f)
+                // Center valley
+                lineTo(w * 0.42f, h * 0.54f)
+                // Left inner crook
+                quadraticTo(w * 0.35f, h * 0.70f, w * 0.24f, h * 0.74f)
+                // Left grip
+                quadraticTo(w * 0.10f, h * 0.76f, w * 0.08f, h * 0.52f)
+                // Left shoulder
+                quadraticTo(w * 0.06f, h * 0.28f, w * 0.22f, h * 0.24f)
+                close()
+            }
+
+            drawPath(
+                path = ctrlBody,
+                color = iconColor,
+                style = Stroke(width = 1.6.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+            )
+
+            // D-Pad cross on left
+            val dpadSize = 3.dp.toPx()
+            drawLine(
+                color = iconColor,
+                start = Offset(w * 0.30f - dpadSize, h * 0.42f),
+                end = Offset(w * 0.30f + dpadSize, h * 0.42f),
+                strokeWidth = 1.4.dp.toPx(),
+                cap = StrokeCap.Round
+            )
+            drawLine(
+                color = iconColor,
+                start = Offset(w * 0.30f, h * 0.42f - dpadSize),
+                end = Offset(w * 0.30f, h * 0.42f + dpadSize),
+                strokeWidth = 1.4.dp.toPx(),
+                cap = StrokeCap.Round
+            )
+
+            // Action buttons on right
+            drawCircle(
+                color = iconColor,
+                radius = 1.2.dp.toPx(),
+                center = Offset(w * 0.70f, h * 0.38f)
+            )
+            drawCircle(
+                color = iconColor,
+                radius = 1.2.dp.toPx(),
+                center = Offset(w * 0.70f, h * 0.47f)
+            )
+
+            // Downward triangle ▼ below controller
+            val tri = Path().apply {
+                moveTo(w * 0.38f, h * 0.82f)
+                lineTo(w * 0.62f, h * 0.82f)
+                lineTo(w * 0.50f, h * 0.98f)
+                close()
+            }
+            drawPath(path = tri, color = iconColor, style = Fill)
+        }
     }
 }
 
 /**
- * Custom vector canvas drawing the iconic Xbox sphere logo.
+ * Top-right red radiating waves network broadcast indicator matching the screenshot ((•)).
  */
 @Composable
-fun XboxLogoIcon(size: Dp = 24.dp) {
-    Canvas(modifier = Modifier.size(size)) {
-        val radius = this.size.minDimension / 2f
-        val center = Offset(radius, radius)
+fun NetworkBroadcastIndicator(modifier: Modifier = Modifier) {
+    Canvas(modifier = modifier.size(34.dp)) {
+        val w = size.width
+        val h = size.height
+        val center = Offset(w / 2f, h / 2f)
+        val red = Color(0xFFEF4444) // Bright warning red
 
-        // Draw outer ring
+        // Center dot
         drawCircle(
-            color = Color.White,
-            radius = radius - 1f,
-            style = Stroke(width = 1.5.dp.toPx())
+            color = red,
+            radius = 2.4.dp.toPx(),
+            center = center
         )
 
-        // Draw the distinctive curved 'X' paths of the Xbox logo
-        val strokeWidth = 2.4.dp.toPx()
-        val path1 = Path().apply {
-            moveTo(center.x - radius * 0.52f, center.y - radius * 0.52f)
-            quadraticTo(
-                center.x - radius * 0.1f, center.y,
-                center.x - radius * 0.55f, center.y + radius * 0.52f
-            )
-        }
-        val path2 = Path().apply {
-            moveTo(center.x + radius * 0.52f, center.y - radius * 0.52f)
-            quadraticTo(
-                center.x + radius * 0.1f, center.y,
-                center.x + radius * 0.55f, center.y + radius * 0.52f
-            )
-        }
-        drawPath(path1, color = Color.White, style = Stroke(width = strokeWidth, cap = StrokeCap.Round))
-        drawPath(path2, color = Color.White, style = Stroke(width = strokeWidth, cap = StrokeCap.Round))
+        // Left inner wave
+        drawArc(
+            color = red,
+            startAngle = 135f,
+            sweepAngle = 90f,
+            useCenter = false,
+            topLeft = Offset(center.x - 7.dp.toPx(), center.y - 7.dp.toPx()),
+            size = Size(14.dp.toPx(), 14.dp.toPx()),
+            style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
+        )
 
-        // Center top crest arc
-        val topCrest = Path().apply {
-            moveTo(center.x - radius * 0.28f, center.y - radius * 0.45f)
-            quadraticTo(center.x, center.y - radius * 0.2f, center.x + radius * 0.28f, center.y - radius * 0.45f)
-        }
-        drawPath(topCrest, color = Color.White, style = Stroke(width = strokeWidth * 0.9f, cap = StrokeCap.Round))
+        // Left outer wave
+        drawArc(
+            color = red,
+            startAngle = 135f,
+            sweepAngle = 90f,
+            useCenter = false,
+            topLeft = Offset(center.x - 12.dp.toPx(), center.y - 12.dp.toPx()),
+            size = Size(24.dp.toPx(), 24.dp.toPx()),
+            style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
+        )
+
+        // Right inner wave
+        drawArc(
+            color = red,
+            startAngle = 315f,
+            sweepAngle = 90f,
+            useCenter = false,
+            topLeft = Offset(center.x - 7.dp.toPx(), center.y - 7.dp.toPx()),
+            size = Size(14.dp.toPx(), 14.dp.toPx()),
+            style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
+        )
+
+        // Right outer wave
+        drawArc(
+            color = red,
+            startAngle = 315f,
+            sweepAngle = 90f,
+            useCenter = false,
+            topLeft = Offset(center.x - 12.dp.toPx(), center.y - 12.dp.toPx()),
+            size = Size(24.dp.toPx(), 24.dp.toPx()),
+            style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
+        )
     }
 }
 
 /**
- * Analog stick component matching the exact screenshot:
- * - Outer concentric circular ring
- * - Middle concentric circular ring
- * - Thumb knob disc with dotted tactile grip pattern (4x4 grid of circular dots)
+ * Analog stick matching the reference image:
+ * - Large outer concentric circle ring (thin border)
+ * - Large middle concentric circle ring (thin border)
+ * - Solid light-gray thumb knob with tactile dot matrix grid in the center
  * - Continuous smooth analog movement and spring-back on release
  */
 @Composable
@@ -608,7 +755,7 @@ fun AnalogThumbStick(
 
     val animatedOffset by animateOffsetAsState(
         targetValue = if (isDragging) rawOffset else Offset.Zero,
-        animationSpec = spring(dampingRatio = 0.6f, stiffness = 800f),
+        animationSpec = spring(dampingRatio = 0.65f, stiffness = 850f),
         label = "stickSpring"
     )
 
@@ -658,31 +805,31 @@ fun AnalogThumbStick(
                 }
             }
     ) {
-        // Concentric Rings Background Canvas
+        // Dual Concentric Rings Background Canvas
         Canvas(modifier = Modifier.fillMaxSize()) {
             val center = Offset(size.width / 2f, size.height / 2f)
             val outerRadius = size.width / 2f - 2.dp.toPx()
             val middleRadius = outerRadius * 0.72f
 
-            // Outer ring
+            // Outer concentric ring
             drawCircle(
-                color = Color(0x4DFFFFFF),
+                color = Color(0x45FFFFFF),
                 radius = outerRadius,
                 center = center,
                 style = Stroke(width = 1.5.dp.toPx())
             )
 
-            // Middle ring
+            // Middle concentric ring
             drawCircle(
-                color = Color(0x33FFFFFF),
+                color = Color(0x35FFFFFF),
                 radius = middleRadius,
                 center = center,
                 style = Stroke(width = 1.5.dp.toPx())
             )
         }
 
-        // Thumb Knob with dotted grip pattern (as shown in the reference image)
-        val knobSize = 68.dp
+        // Thumb Knob with tactile dot-matrix grip disc (exact match to screenshot)
+        val knobSize = 70.dp
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
@@ -692,9 +839,9 @@ fun AnalogThumbStick(
                 .background(Color(0xFFCBD5E1), CircleShape)
                 .border(2.dp, Color(0xFFE2E8F0), CircleShape)
         ) {
-            // Tactile dot matrix grip pattern in center of the knob
-            Canvas(modifier = Modifier.size(32.dp)) {
-                val dotRadius = 1.3.dp.toPx()
+            // Tactile 4x4 dot-matrix grip pattern on knob
+            Canvas(modifier = Modifier.size(34.dp)) {
+                val dotRadius = 1.35.dp.toPx()
                 val dotColor = Color(0xFF64748B)
                 val rows = 4
                 val cols = 4
@@ -711,5 +858,49 @@ fun AnalogThumbStick(
                 }
             }
         }
+    }
+}
+
+/**
+ * Custom vector canvas drawing the iconic Xbox sphere logo.
+ */
+@Composable
+fun XboxLogoIcon(size: Dp = 24.dp) {
+    Canvas(modifier = Modifier.size(size)) {
+        val radius = this.size.minDimension / 2f
+        val center = Offset(radius, radius)
+
+        // Draw outer ring
+        drawCircle(
+            color = Color.White,
+            radius = radius - 1f,
+            style = Stroke(width = 1.5.dp.toPx())
+        )
+
+        // Draw the distinctive curved 'X' paths of the Xbox logo
+        val strokeWidth = 2.4.dp.toPx()
+        val path1 = Path().apply {
+            moveTo(center.x - radius * 0.52f, center.y - radius * 0.52f)
+            quadraticTo(
+                center.x - radius * 0.1f, center.y,
+                center.x - radius * 0.55f, center.y + radius * 0.52f
+            )
+        }
+        val path2 = Path().apply {
+            moveTo(center.x + radius * 0.52f, center.y - radius * 0.52f)
+            quadraticTo(
+                center.x + radius * 0.1f, center.y,
+                center.x + radius * 0.55f, center.y + radius * 0.52f
+            )
+        }
+        drawPath(path1, color = Color.White, style = Stroke(width = strokeWidth, cap = StrokeCap.Round))
+        drawPath(path2, color = Color.White, style = Stroke(width = strokeWidth, cap = StrokeCap.Round))
+
+        // Center top crest arc
+        val topCrest = Path().apply {
+            moveTo(center.x - radius * 0.28f, center.y - radius * 0.45f)
+            quadraticTo(center.x, center.y - radius * 0.2f, center.x + radius * 0.28f, center.y - radius * 0.45f)
+        }
+        drawPath(topCrest, color = Color.White, style = Stroke(width = strokeWidth * 0.9f, cap = StrokeCap.Round))
     }
 }
