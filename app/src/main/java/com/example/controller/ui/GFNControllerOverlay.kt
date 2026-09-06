@@ -85,34 +85,43 @@ fun GFNControllerOverlay(
         val screenHeight = maxHeight
 
         // ==========================================
-        // 1. TOP STATUS BAR (Exact GeForce NOW style)
+        // 1. TOP STATUS BAR (GeForce NOW style compact header)
         // ==========================================
         Row(
             modifier = Modifier
-                .fillMaxWidth()
                 .align(Alignment.TopCenter)
-                .padding(horizontal = 24.dp, vertical = 12.dp),
+                .padding(top = 10.dp)
+                .background(
+                    color = Color(0xC0141416),
+                    shape = CircleShape
+                )
+                .border(
+                    width = 1.dp,
+                    color = Color.White.copy(alpha = 0.12f),
+                    shape = CircleShape
+                )
+                .padding(horizontal = 14.dp, vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Top-left: Xbox logo + "Xbox Cloud Gaming"
+            // Xbox branding
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.testTag("status_xbox_branding")
             ) {
-                XboxLogoIcon(size = 26.dp)
-                Spacer(modifier = Modifier.width(10.dp))
+                XboxLogoIcon(size = 22.dp)
+                Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "Xbox Cloud Gaming",
+                    text = "Xbox Cloud",
                     color = Color.White,
-                    fontSize = 15.sp,
+                    fontSize = 13.sp,
                     fontWeight = FontWeight.Medium,
-                    letterSpacing = 0.3.sp
+                    letterSpacing = 0.2.sp
                 )
             }
 
-            Spacer(modifier = Modifier.weight(1f))
+            Spacer(modifier = Modifier.width(16.dp))
 
-            // Top-center buttons: View (◀), Xbox Guide, Menu (▶)
+            // Center buttons: View (◀), Xbox Guide, Menu (▶)
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.testTag("center_nav_buttons")
@@ -125,7 +134,7 @@ fun GFNControllerOverlay(
                     testTag = "btn_view"
                 )
 
-                Spacer(modifier = Modifier.width(12.dp))
+                Spacer(modifier = Modifier.width(10.dp))
 
                 // Xbox Guide button (Center glowing circle)
                 XboxGuideButton(
@@ -134,7 +143,7 @@ fun GFNControllerOverlay(
                     testTag = "btn_guide"
                 )
 
-                Spacer(modifier = Modifier.width(12.dp))
+                Spacer(modifier = Modifier.width(10.dp))
 
                 // Menu / Start button (Pill with right triangle)
                 PillIconButton(
@@ -145,9 +154,9 @@ fun GFNControllerOverlay(
                 )
             }
 
-            Spacer(modifier = Modifier.weight(1f))
+            Spacer(modifier = Modifier.width(16.dp))
 
-            // Top-right: Wi-Fi + latency ping + Settings gear icon
+            // Network info & Settings gear
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.testTag("status_network_info")
@@ -156,27 +165,27 @@ fun GFNControllerOverlay(
                     imageVector = Icons.Default.Wifi,
                     contentDescription = "Wi-Fi status",
                     tint = Color.White.copy(alpha = 0.9f),
-                    modifier = Modifier.size(18.dp)
+                    modifier = Modifier.size(16.dp)
                 )
-                Spacer(modifier = Modifier.width(6.dp))
+                Spacer(modifier = Modifier.width(5.dp))
                 Text(
                     text = "$pingMs ms",
                     color = Color.White.copy(alpha = 0.9f),
-                    fontSize = 13.sp,
+                    fontSize = 12.sp,
                     fontWeight = FontWeight.Normal
                 )
-                Spacer(modifier = Modifier.width(12.dp))
+                Spacer(modifier = Modifier.width(8.dp))
                 IconButton(
                     onClick = onOpenSettings,
                     modifier = Modifier
-                        .size(36.dp)
+                        .size(32.dp)
                         .testTag("settings_button")
                 ) {
                     Icon(
                         imageVector = Icons.Outlined.Settings,
                         contentDescription = "Settings",
                         tint = Color.White.copy(alpha = 0.9f),
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(18.dp)
                     )
                 }
             }
@@ -186,27 +195,27 @@ fun GFNControllerOverlay(
         // 2. LEFT SIDE CONTROLS
         // ==========================================
 
-        // LT Button (Top-left)
+        // LT Button (Top-left, placed upward at natural shoulder position)
         CircularGamepadButton(
             text = "LT",
             isPressed = pressedMap[GamepadConstants.BTN_LT] == true,
-            size = 58.dp,
+            size = 56.dp,
             onPressChange = { handleButtonChange(GamepadConstants.BTN_LT, it) },
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .padding(start = 40.dp, top = 64.dp)
+                .padding(start = 28.dp, top = 16.dp)
                 .testTag("btn_lt")
         )
 
-        // LB Button (Adjacent to LT)
+        // LB Button (Adjacent to LT, placed upward)
         CircularGamepadButton(
             text = "LB",
             isPressed = pressedMap[GamepadConstants.BTN_LB] == true,
-            size = 58.dp,
+            size = 56.dp,
             onPressChange = { handleButtonChange(GamepadConstants.BTN_LB, it) },
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .padding(start = 144.dp, top = 64.dp)
+                .padding(start = 98.dp, top = 16.dp)
                 .testTag("btn_lb")
         )
 
@@ -292,27 +301,27 @@ fun GFNControllerOverlay(
         // 3. RIGHT SIDE CONTROLS
         // ==========================================
 
-        // RB Button
+        // RB Button (Adjacent to RT, placed upward)
         CircularGamepadButton(
             text = "RB",
             isPressed = pressedMap[GamepadConstants.BTN_RB] == true,
-            size = 58.dp,
+            size = 56.dp,
             onPressChange = { handleButtonChange(GamepadConstants.BTN_RB, it) },
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .padding(end = 144.dp, top = 64.dp)
+                .padding(end = 98.dp, top = 16.dp)
                 .testTag("btn_rb")
         )
 
-        // RT Button
+        // RT Button (Top-right, placed upward at natural shoulder position)
         CircularGamepadButton(
             text = "RT",
             isPressed = pressedMap[GamepadConstants.BTN_RT] == true,
-            size = 58.dp,
+            size = 56.dp,
             onPressChange = { handleButtonChange(GamepadConstants.BTN_RT, it) },
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .padding(end = 40.dp, top = 64.dp)
+                .padding(end = 28.dp, top = 16.dp)
                 .testTag("btn_rt")
         )
 
