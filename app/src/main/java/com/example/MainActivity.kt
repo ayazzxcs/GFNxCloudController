@@ -2,9 +2,12 @@ package com.example
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Message
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -14,7 +17,9 @@ import android.view.WindowManager
 import android.webkit.CookieManager
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
+import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
@@ -80,9 +85,29 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val XBOX_CLOUD_URL = "https://www.xbox.com/play"
-        // Desktop Windows Edge user agent guarantees high-bitrate WebRTC stream & native Gamepad API polling
-        const val DESKTOP_EDGE_USER_AGENT =
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"
+
+        // Authentic Google Chrome on Android Mobile User Agent.
+        // Prevents Microsoft Identity / Arkose Labs anti-bot lockout ("Too many incorrect attempts" / suspicious activity)
+        // caused when spoofing Windows desktop UA while running on an Android Linux/ARM environment.
+        const val CHROME_ANDROID_USER_AGENT =
+            "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.6778.200 Mobile Safari/537.36"
+
+        // Landscape/Tablet Android Chrome User Agent for widescreen game streaming on xCloud
+        const val CHROME_TABLET_USER_AGENT =
+            "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.6778.200 Safari/537.36"
+    }
+
+    private fun isAuthUrl(url: String?): Boolean {
+        if (url == null) return false
+        val lower = url.lowercase()
+        return lower.contains("login.live.com") ||
+                lower.contains("login.microsoftonline.com") ||
+                lower.contains("account.live.com") ||
+                lower.contains("account.microsoft.com") ||
+                lower.contains("msauth") ||
+                lower.contains("msft") ||
+                lower.contains("oauth") ||
+                lower.contains("live.com")
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -168,14 +193,15 @@ class MainActivity : ComponentActivity() {
             settings.apply {
                 javaScriptEnabled = true
                 domStorageEnabled = true
+                databaseEnabled = true
                 mediaPlaybackRequiresUserGesture = false
                 useWideViewPort = true
                 loadWithOverviewMode = true
                 allowFileAccess = true
                 allowContentAccess = true
                 cacheMode = WebSettings.LOAD_DEFAULT
-                userAgentString = DESKTOP_EDGE_USER_AGENT
-                setSupportMultipleWindows(false)
+                userAgentString = CHROME_ANDROID_USER_AGENT
+                setSupportMultipleWindows(true)
                 javaScriptCanOpenWindowsAutomatically = true
                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -183,8 +209,10 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            CookieManager.getInstance().setAcceptCookie(true)
-            CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+            val cookieManager = CookieManager.getInstance()
+            cookieManager.setAcceptCookie(true)
+            cookieManager.setAcceptThirdPartyCookies(this, true)
+            CookieManager.setAcceptFileSchemeCookies(true)
 
             // Inject the AndroidControllerBridge to allow synchronous polling from JS
             val bridge = AndroidControllerBridge(stateManager) { duration, strong, weak ->
@@ -201,19 +229,68 @@ class MainActivity : ComponentActivity() {
                     super.onProgressChanged(view, newProgress)
                     _loadingProgress.value = newProgress
                 }
+
+                override fun onCreateWindow(
+                    view: WebView?,
+                    isDialog: Boolean,
+                    isUserGesture: Boolean,
+                    resultMsg: Message?
+                ): Boolean {
+                    // Forward OAuth/login popup requests seamlessly inside the existing WebView
+                    val transport = resultMsg?.obj as? WebView.WebViewTransport
+                    transport?.webView = view
+                    resultMsg?.sendToTarget()
+                    return true
+                }
             }
 
             webViewClient = object : WebViewClient() {
+                override fun shouldOverrideUrlLoading(
+                    view: WebView?,
+                    request: WebResourceRequest?
+                ): Boolean {
+                    val uri = request?.url ?: return false
+                    val scheme = uri.scheme?.lowercase() ?: ""
+
+                    // Allow non-http(s) schemes like msauth:// or intent:// to trigger system apps (e.g. Authenticator)
+                    if (scheme != "http" && scheme != "https") {
+                        try {
+                            val intent = Intent(Intent.ACTION_VIEW, uri)
+                            context.startActivity(intent)
+                            return true
+                        } catch (e: Exception) {
+                            return false
+                        }
+                    }
+
+                    // Dynamically set appropriate User Agent
+                    val urlStr = uri.toString()
+                    if (isAuthUrl(urlStr)) {
+                        view?.settings?.userAgentString = CHROME_ANDROID_USER_AGENT
+                    } else if (urlStr.contains("xbox.com")) {
+                        view?.settings?.userAgentString = CHROME_TABLET_USER_AGENT
+                    }
+
+                    return false
+                }
+
                 override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                     super.onPageStarted(view, url, favicon)
                     _loadingProgress.value = 10
-                    injectController(view)
+                    if (isAuthUrl(url)) {
+                        view?.settings?.userAgentString = CHROME_ANDROID_USER_AGENT
+                    } else {
+                        injectController(view)
+                    }
                 }
 
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
                     _loadingProgress.value = 100
-                    injectController(view)
+                    CookieManager.getInstance().flush()
+                    if (!isAuthUrl(url)) {
+                        injectController(view)
+                    }
                 }
 
                 override fun onRenderProcessGone(
@@ -236,8 +313,26 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun injectController(view: WebView?) {
-        if (injectorScript.isNotEmpty()) {
+        val currentUrl = view?.url ?: ""
+        // NEVER inject controller scripts into Microsoft login/authentication pages to prevent anti-bot DOM flags
+        if (isAuthUrl(currentUrl)) {
+            return
+        }
+        if (injectorScript.isNotEmpty() && currentUrl.contains("xbox.com")) {
             view?.evaluateJavascript(injectorScript, null)
+        }
+    }
+
+    private fun clearWebData(webView: WebView) {
+        try {
+            CookieManager.getInstance().removeAllCookies(null)
+            CookieManager.getInstance().flush()
+            WebStorage.getInstance().deleteAllData()
+            webView.clearCache(true)
+            webView.clearHistory()
+            webView.loadUrl(XBOX_CLOUD_URL)
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 
@@ -407,6 +502,18 @@ fun MainScreen(
                 onOverlayToggle = { isOverlayVisible = it },
                 onReloadPage = { webView.reload() },
                 onGoHome = { webView.loadUrl(MainActivity.XBOX_CLOUD_URL) },
+                onClearData = {
+                    try {
+                        CookieManager.getInstance().removeAllCookies(null)
+                        CookieManager.getInstance().flush()
+                        WebStorage.getInstance().deleteAllData()
+                        webView.clearCache(true)
+                        webView.clearHistory()
+                        webView.loadUrl(MainActivity.XBOX_CLOUD_URL)
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                },
                 onDismiss = { showSettingsDialog = false }
             )
         }

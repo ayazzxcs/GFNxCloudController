@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SportsEsports
@@ -53,6 +54,7 @@ fun SettingsDialog(
     onOverlayToggle: (Boolean) -> Unit,
     onReloadPage: () -> Unit,
     onGoHome: () -> Unit,
+    onClearData: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
     Dialog(onDismissRequest = onDismiss) {
@@ -257,6 +259,24 @@ fun SettingsDialog(
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("xCloud Home", color = Color.White)
                     }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Reset Login & Clear Cookies (fixes blocked Microsoft sign-in / lockouts)
+                OutlinedButton(
+                    onClick = {
+                        onDismiss()
+                        onClearData()
+                    },
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFEF4444)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("clear_cookies_button")
+                ) {
+                    Icon(imageVector = Icons.Default.DeleteSweep, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Reset Login Session & Clear Cookies", fontSize = 13.sp)
                 }
             }
         }
