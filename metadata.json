@@ -1,0 +1,7 @@
+{
+  "name": "GFNxCloudController",
+  "description": "Xbox Cloud Gaming client with GeForce NOW-style on-screen Xbox controller overlay.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
