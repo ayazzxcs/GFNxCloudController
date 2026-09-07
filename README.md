@@ -94,7 +94,7 @@ The project is designed around a virtual Gamepad API approach rather than simply
 Clone the repository:
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/GFN-xCloud-Controller.git
+git clone https://github.com/ayazzxcs/GFNxCloudController.git
 cd GFN-xCloud-Controller
 ```
 
@@ -166,9 +166,6 @@ You can contribute by:
 - Submitting pull requests
 - Improving documentation
 
-## 📜 License
-
-See [`LICENSE`](LICENSE) for the license applicable to this project.
 
 ## ⭐ Support the Project
 
