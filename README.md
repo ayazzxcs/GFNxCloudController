@@ -122,7 +122,7 @@ Stable APK builds can be published under the repository's **Releases** section.
 
 If you only want to use the application, download the APK from the latest release rather than building the project yourself.
 
-https://kommodo.ai/i/yaXedBbI2wmI9EtSkNuY
+![Alternative Text](https://kommodo.ai/i/yaXedBbI2wmI9EtSkNuY)
 
 ## ⚠️ Disclaimer
 
