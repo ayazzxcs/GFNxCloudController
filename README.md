@@ -122,7 +122,7 @@ Stable APK builds can be published under the repository's **Releases** section.
 
 If you only want to use the application, download the APK from the latest release rather than building the project yourself.
 
-<img src="https://ibb.co/5hG7y81q" alt="Alternative Text" width="500">
+<img src="https://i.ibb.co/v4VtGPc2/Screenshot-20260907-200112-GFNx-Cloud.jpg" alt="Alternative Text" width="500">
 
 ## ⚠️ Disclaimer
 
