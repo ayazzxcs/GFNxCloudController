@@ -251,14 +251,14 @@ fun SettingsDialog(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Force 60+ FPS & Max Bitrate",
+                                text = "Unlock 120Hz / 60+ FPS & Max Bitrate",
                                 color = Color.White,
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.SemiBold
                             )
                         }
                         Text(
-                            text = "Forces 60fps SDP WebRTC negotiation, 25 Mbps bandwidth & 120Hz display refresh",
+                            text = "Requests up to 120 FPS via WebRTC SDP, 30 Mbps bandwidth & native 120Hz display refresh",
                             color = Color(0xFF9CA3AF),
                             fontSize = 11.sp,
                             modifier = Modifier.padding(start = 26.dp, top = 2.dp)

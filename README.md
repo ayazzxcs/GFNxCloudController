@@ -10,17 +10,17 @@ GFN xCloud Controller provides a GeForce NOW-inspired touchscreen gamepad overla
 - 📱 Designed for Android with Edge-to-Edge display
 - ☁️ Built for Xbox Cloud Gaming (`xbox.com/play`)
 - 🕹️ GeForce NOW-inspired controller overlay
-- 🚀 **60+ FPS & 25 Mbps WebRTC Stream Optimization** (SDP munging)
+- 🚀 **120 FPS / 60+ FPS & 30 Mbps WebRTC Stream Optimization** (SDP negotiation munging)
 - ✨ **Clarity Boost**: Hardware-accelerated visual sharpening & contrast enhancement filter
 - 🌐 **Edge Android Tablet Profile (`EdgA`)**: Unlocks full 1080p stream pipeline while preserving seamless Microsoft Account OAuth
-- 📊 **Real-time decoded FPS & Ping telemetry badge**
-- ⚡ **High refresh rate display mode** (90Hz / 120Hz unlock)
+- 📊 **Real-time decoded FPS & Ping telemetry badge** (with tap-to-hide and Settings toggle)
+- ⚡ **Native 120Hz display & touch sampling mode** (sub-8.3ms input polling)
 - 📳 **Dual-motor vibration & haptic feedback** support
 - 🎯 Virtual analog sticks with responsive spring-back
 - 🎛️ LT / RT analog triggers with progressive touch
 - 🔘 LB / RB bumpers & L3 / R3 stick clicks
 - 🔵 Xbox-style A / B / X / Y buttons & D-pad
-- ⚙️ **In-game Quick Settings**: opacity slider, haptics toggle, 60 FPS toggle, Clarity Boost toggle, cache wipe
+- ⚙️ **In-game Quick Settings**: opacity slider, haptics toggle, 120Hz/60+ FPS toggle, Clarity Boost toggle, FPS badge toggle, cache wipe
 - 🌑 Transparent dark gaming UI with customizable opacity
 - 🔄 Landscape gaming layout
 - ⚡ Lightweight direct JavaScript bridge (<1ms latency)

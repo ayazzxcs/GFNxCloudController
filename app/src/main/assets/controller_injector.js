@@ -207,23 +207,23 @@
                 }
 
                 if (inVideo) {
-                    // Force high bandwidth allocation (25 Mbps)
+                    // Force high bandwidth allocation (30 Mbps for 120 FPS / 1080p)
                     if (line.startsWith('b=AS:') || line.startsWith('b=TIAS:')) {
-                        output.push('b=AS:25000');
+                        output.push('b=AS:30000');
                         videoHasBitrate = true;
                         continue;
                     }
 
-                    // Inject 60fps & 1080p frame size parameters into video fmtp lines
+                    // Inject 120fps & 1080p frame size parameters into video fmtp lines
                     if (line.startsWith('a=fmtp:')) {
                         if (!line.includes('max-fr=') && !line.includes('max-fps=')) {
-                            line += ';max-fr=60;max-fps=60;min-fr=60';
+                            line += ';max-fr=120;max-fps=120;min-fr=60';
                         } else {
-                            line = line.replace(/max-fr=\d+/g, 'max-fr=60')
-                                       .replace(/max-fps=\d+/g, 'max-fps=60');
+                            line = line.replace(/max-fr=\d+/g, 'max-fr=120')
+                                       .replace(/max-fps=\d+/g, 'max-fps=120');
                         }
                         if (!line.includes('x-google-min-bitrate=')) {
-                            line += ';x-google-min-bitrate=15000;x-google-max-bitrate=25000;x-google-start-bitrate=20000';
+                            line += ';x-google-min-bitrate=15000;x-google-max-bitrate=30000;x-google-start-bitrate=22000';
                         }
                     }
                 }
@@ -232,7 +232,7 @@
 
                 // If m=video didn't have b=AS, append it after c=IN line
                 if (inVideo && !videoHasBitrate && line.startsWith('c=IN')) {
-                    output.push('b=AS:25000');
+                    output.push('b=AS:30000');
                     videoHasBitrate = true;
                 }
             }
