@@ -6,14 +6,18 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
@@ -46,6 +50,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 
 @Composable
 fun SettingsDialog(
@@ -66,22 +71,26 @@ fun SettingsDialog(
     onClearData: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
         Card(
             shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(containerColor = Color(0xFF161B22)),
             modifier = Modifier
-                .widthIn(max = 520.dp)
-                .fillMaxWidth()
-                .padding(16.dp)
+                .widthIn(max = 560.dp)
+                .fillMaxWidth(0.92f)
+                .fillMaxHeight(0.92f)
+                .padding(vertical = 10.dp)
                 .testTag("settings_dialog")
         ) {
             Column(
                 modifier = Modifier
-                    .padding(24.dp)
-                    .fillMaxWidth()
+                    .fillMaxSize()
+                    .padding(horizontal = 22.dp, vertical = 18.dp)
             ) {
-                // Header
+                // Header (Pinned at top so Close button is always accessible)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -114,16 +123,24 @@ fun SettingsDialog(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
-                // Virtual Gamepad Status Banner
-                Row(
+                // Scrollable container enabling sliding down options in landscape & compact screens
+                val scrollState = rememberScrollState()
+                Column(
                     modifier = Modifier
+                        .weight(1f)
                         .fillMaxWidth()
-                        .background(Color(0xFF1F2937), RoundedCornerShape(10.dp))
-                        .padding(horizontal = 14.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .verticalScroll(scrollState)
                 ) {
+                    // Virtual Gamepad Status Banner
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color(0xFF1F2937), RoundedCornerShape(10.dp))
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                     Icon(
                         imageVector = Icons.Default.CheckCircle,
                         contentDescription = null,
@@ -420,7 +437,10 @@ fun SettingsDialog(
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Reset Login Session & Clear Cookies", fontSize = 13.sp)
                 }
+
+                Spacer(modifier = Modifier.height(16.dp))
             }
         }
     }
+}
 }
