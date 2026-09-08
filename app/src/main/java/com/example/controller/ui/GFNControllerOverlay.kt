@@ -5,6 +5,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
@@ -69,6 +70,7 @@ fun GFNControllerOverlay(
     pingMs: Int = 32,
     fps: Int = 60,
     showFps: Boolean = true,
+    onToggleFps: () -> Unit = {},
     onTriggerHaptic: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
     modifier: Modifier = Modifier
@@ -139,7 +141,13 @@ fun GFNControllerOverlay(
             verticalAlignment = Alignment.CenterVertically
         ) {
             if (showFps) {
-                FpsPillBadge(fps = fps)
+                FpsPillBadge(
+                    fps = fps,
+                    onClick = {
+                        if (hapticFeedbackEnabled) onTriggerHaptic()
+                        onToggleFps()
+                    }
+                )
                 Spacer(modifier = Modifier.width(10.dp))
             }
             NetworkBroadcastIndicator()
@@ -915,19 +923,27 @@ fun XboxLogoIcon(size: Dp = 24.dp) {
 }
 
 /**
- * On-screen real-time FPS Pill badge displaying stream framerate and status
+ * On-screen real-time FPS Pill badge displaying stream framerate and status.
+ * Tapping it allows directly toggling off the badge without opening settings.
  */
 @Composable
-fun FpsPillBadge(fps: Int, modifier: Modifier = Modifier) {
+fun FpsPillBadge(
+    fps: Int,
+    onClick: () -> Unit = {},
+    modifier: Modifier = Modifier
+) {
     val displayFps = fps.coerceIn(15, 144)
     val isHighFps = displayFps >= 55
     val dotColor = if (isHighFps) Color(0xFF10B981) else Color(0xFFF59E0B)
 
     Row(
         modifier = modifier
-            .background(Color(0x60000000), RoundedCornerShape(12.dp))
+            .background(Color(0x70000000), RoundedCornerShape(12.dp))
             .border(1.dp, Color(0x35FFFFFF), RoundedCornerShape(12.dp))
-            .padding(horizontal = 9.dp, vertical = 4.dp),
+            .clip(RoundedCornerShape(12.dp))
+            .clickable { onClick() }
+            .padding(horizontal = 9.dp, vertical = 4.dp)
+            .testTag("fps_pill_badge"),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(

@@ -87,13 +87,13 @@ class MainActivity : ComponentActivity() {
     companion object {
         const val XBOX_CLOUD_URL = "https://www.xbox.com/play"
 
-        // Authentic Landscape/Tablet Android Chrome User Agent.
+        // Landscape/Tablet Android Chrome & Edge User Agent.
         // 1. Matches native Android Linux runtime (no Arkose Labs anti-bot flag or platform mismatch).
         // 2. Stable across all OAuth and Xbox Live endpoints (login.live.com, sisu.xboxlive.com, xbox.com/auth/msa),
         //    preventing Microsoft Identity token-binding mismatch and password verification loops.
-        // 3. Unlocks the widescreen landscape layout on xbox.com/play without mobile layout restrictions.
+        // 3. Includes EdgA to identify as Microsoft Edge for Android and unlocks full 1080p 60 FPS stream pipeline.
         const val CHROME_TABLET_USER_AGENT =
-            "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.6778.200 Safari/537.36"
+            "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.6778.200 Safari/537.36 EdgA/131.0.2903.99"
     }
 
     private fun isAuthUrl(url: String?): Boolean {
@@ -415,15 +415,24 @@ fun MainScreen(
     onHapticClick: () -> Unit,
     getWebView: () -> WebView
 ) {
-    var overlayOpacity by remember { mutableFloatStateOf(0.9f) }
-    var hapticsEnabled by remember { mutableStateOf(true) }
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("gfn_settings", Context.MODE_PRIVATE) }
+
+    var overlayOpacity by remember { mutableFloatStateOf(prefs.getFloat("overlay_opacity", 0.9f)) }
+    var hapticsEnabled by remember { mutableStateOf(prefs.getBoolean("haptics_enabled", true)) }
     var isOverlayVisible by remember { mutableStateOf(true) }
-    var force60FpsEnabled by remember { mutableStateOf(true) }
-    var showFpsCounter by remember { mutableStateOf(true) }
+    var force60FpsEnabled by remember { mutableStateOf(prefs.getBoolean("force_60fps", true)) }
+    var clarityBoostEnabled by remember { mutableStateOf(prefs.getBoolean("clarity_boost", true)) }
+    var showFpsCounter by remember { mutableStateOf(prefs.getBoolean("show_fps_counter", true)) }
     var showSettingsDialog by remember { mutableStateOf(false) }
     var currentPingMs by remember { mutableIntStateOf(32) }
 
     val webView = remember { getWebView() }
+
+    // Sync Clarity Boost toggle to WebView
+    LaunchedEffect(clarityBoostEnabled) {
+        webView.evaluateJavascript("window.setClarityBoost && window.setClarityBoost($clarityBoostEnabled);", null)
+    }
 
     // Measure live latency to xbox.com
     LaunchedEffect(Unit) {
@@ -500,6 +509,10 @@ fun MainScreen(
                 pingMs = currentPingMs,
                 fps = fps,
                 showFps = showFpsCounter,
+                onToggleFps = {
+                    showFpsCounter = !showFpsCounter
+                    prefs.edit().putBoolean("show_fps_counter", showFpsCounter).apply()
+                },
                 onTriggerHaptic = onHapticClick,
                 onOpenSettings = { showSettingsDialog = true },
                 modifier = Modifier.testTag("gfn_controller_overlay")
@@ -528,15 +541,32 @@ fun MainScreen(
         if (showSettingsDialog) {
             SettingsDialog(
                 opacity = overlayOpacity,
-                onOpacityChange = { overlayOpacity = it },
+                onOpacityChange = {
+                    overlayOpacity = it
+                    prefs.edit().putFloat("overlay_opacity", it).apply()
+                },
                 hapticsEnabled = hapticsEnabled,
-                onHapticsToggle = { hapticsEnabled = it },
+                onHapticsToggle = {
+                    hapticsEnabled = it
+                    prefs.edit().putBoolean("haptics_enabled", it).apply()
+                },
                 overlayVisible = isOverlayVisible,
                 onOverlayToggle = { isOverlayVisible = it },
                 force60FpsEnabled = force60FpsEnabled,
-                onForce60FpsToggle = { force60FpsEnabled = it },
+                onForce60FpsToggle = {
+                    force60FpsEnabled = it
+                    prefs.edit().putBoolean("force_60fps", it).apply()
+                },
+                clarityBoostEnabled = clarityBoostEnabled,
+                onClarityBoostToggle = {
+                    clarityBoostEnabled = it
+                    prefs.edit().putBoolean("clarity_boost", it).apply()
+                },
                 showFpsCounter = showFpsCounter,
-                onShowFpsCounterToggle = { showFpsCounter = it },
+                onShowFpsCounterToggle = {
+                    showFpsCounter = it
+                    prefs.edit().putBoolean("show_fps_counter", it).apply()
+                },
                 onReloadPage = { webView.reload() },
                 onGoHome = { webView.loadUrl(MainActivity.XBOX_CLOUD_URL) },
                 onClearData = {

@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteSweep
@@ -56,6 +57,8 @@ fun SettingsDialog(
     onOverlayToggle: (Boolean) -> Unit,
     force60FpsEnabled: Boolean = true,
     onForce60FpsToggle: (Boolean) -> Unit = {},
+    clarityBoostEnabled: Boolean = true,
+    onClarityBoostToggle: (Boolean) -> Unit = {},
     showFpsCounter: Boolean = true,
     onShowFpsCounterToggle: (Boolean) -> Unit = {},
     onReloadPage: () -> Unit,
@@ -274,31 +277,82 @@ fun SettingsDialog(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // Show Live Stream FPS Counter Switch
+                // Clarity Boost Switch (Sharpens stream video layer)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(18.dp)
-                                .background(Color(0xFF10B981), CircleShape),
-                            contentAlignment = Alignment.Center
-                        ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.AutoAwesome,
+                                contentDescription = null,
+                                tint = Color(0xFF06B6D4), // Cyan accent
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "60",
-                                color = Color.Black,
-                                fontSize = 9.sp,
-                                fontWeight = FontWeight.Bold
+                                text = "Clarity Boost (Visual Sharpening)",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold
                             )
                         }
-                        Spacer(modifier = Modifier.width(10.dp))
                         Text(
-                            text = "Show Live Stream FPS Badge",
-                            color = Color.White,
-                            fontSize = 14.sp
+                            text = "Sharpens stream edges and enhances texture contrast (similar to Microsoft Edge)",
+                            color = Color(0xFF9CA3AF),
+                            fontSize = 11.sp,
+                            modifier = Modifier.padding(start = 26.dp, top = 2.dp)
+                        )
+                    }
+                    Switch(
+                        checked = clarityBoostEnabled,
+                        onCheckedChange = onClarityBoostToggle,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = Color(0xFF06B6D4)
+                        ),
+                        modifier = Modifier.testTag("clarity_boost_switch")
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Show Live Stream FPS Counter Switch (On / Off)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(18.dp)
+                                    .background(if (showFpsCounter) Color(0xFF10B981) else Color(0xFF4B5563), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "60",
+                                    color = if (showFpsCounter) Color.Black else Color.White,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = "Show 60 FPS Stream Badge",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        Text(
+                            text = "Toggle on/off the real-time FPS badge on screen (or tap badge to quickly hide)",
+                            color = Color(0xFF9CA3AF),
+                            fontSize = 11.sp,
+                            modifier = Modifier.padding(start = 28.dp, top = 2.dp)
                         )
                     }
                     Switch(

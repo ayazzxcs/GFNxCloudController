@@ -294,7 +294,49 @@
     }
 
     // 3. Monitor Video Elements, optimize hardware compositing layer, and calculate real-time FPS
+    window.__clarityBoostEnabled = true;
+
+    function injectClarityBoostFilter() {
+        if (document.getElementById('gfn-clarity-boost-svg')) return;
+        try {
+            const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            svg.id = 'gfn-clarity-boost-svg';
+            svg.style.position = 'absolute';
+            svg.style.width = '0';
+            svg.style.height = '0';
+            svg.style.pointerEvents = 'none';
+            svg.innerHTML = `
+                <defs>
+                    <filter id="gfn-clarity-filter">
+                        <feConvolveMatrix order="3" preserveAlpha="true" kernelMatrix="0 -0.35 0 -0.35 2.4 -0.35 0 -0.35 0"/>
+                    </filter>
+                </defs>
+            `;
+            (document.body || document.documentElement).appendChild(svg);
+        } catch (e) {
+            console.warn("[GFNxCloud] Could not inject Clarity Boost SVG filter", e);
+        }
+    }
+
+    function applyClarityBoostToVideo(v) {
+        if (!v) return;
+        if (window.__clarityBoostEnabled) {
+            v.style.filter = 'url(#gfn-clarity-filter) contrast(1.04) saturate(1.04)';
+        } else {
+            v.style.filter = 'none';
+        }
+    }
+
+    window.setClarityBoost = function(enabled) {
+        window.__clarityBoostEnabled = !!enabled;
+        injectClarityBoostFilter();
+        const videos = document.querySelectorAll('video');
+        videos.forEach(applyClarityBoostToVideo);
+        console.log("[GFNxCloud] Clarity Boost set to:", window.__clarityBoostEnabled);
+    };
+
     function monitorStreamVideo() {
+        injectClarityBoostFilter();
         const videos = document.querySelectorAll('video');
         videos.forEach(v => {
             if (!v.__gfn_stream_optimized__) {
@@ -306,6 +348,7 @@
                 // Force GPU layer composition
                 v.style.transform = 'translateZ(0)';
                 v.style.willChange = 'transform';
+                applyClarityBoostToVideo(v);
 
                 // Calculate real decoded stream FPS
                 let lastTime = performance.now();
