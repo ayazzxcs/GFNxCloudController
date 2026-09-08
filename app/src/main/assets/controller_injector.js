@@ -1,5 +1,20 @@
 (function() {
     'use strict';
+    // Immediate safety guard: Never execute on login, account, or authentication endpoints
+    const currentHref = (window.location && window.location.href) ? window.location.href.toLowerCase() : "";
+    if (
+        currentHref.includes("login.live.com") ||
+        currentHref.includes("login.microsoftonline.com") ||
+        currentHref.includes("account.live.com") ||
+        currentHref.includes("account.microsoft.com") ||
+        currentHref.includes("xboxlive.com") ||
+        currentHref.includes("/auth") ||
+        currentHref.includes("signin") ||
+        currentHref.includes("oauth")
+    ) {
+        return;
+    }
+
     if (window.__GFN_CONTROLLER_INJECTED__) return;
     window.__GFN_CONTROLLER_INJECTED__ = true;
 
@@ -156,5 +171,173 @@
         if (attempts > 30) clearInterval(interval);
     }, 1000);
 
-    console.log("[GFNxCloud] Virtual Xbox Gamepad ready");
+    // =========================================================================
+    // XBOX CLOUD GAMING 60+ FPS & HIGH PERFORMANCE STREAM OPTIMIZER
+    // =========================================================================
+    console.log("[GFNxCloud] Initializing 60+ FPS WebRTC stream optimizer...");
+
+    // 1. Prevent background tab/visibility frame throttling
+    try {
+        Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
+        Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
+        Object.defineProperty(document, 'webkitVisibilityState', { get: () => 'visible', configurable: true });
+    } catch (e) {
+        console.warn("[GFNxCloud] Visibility hook error", e);
+    }
+
+    // 2. SDP Munging: Force 60+ FPS framerate and 25 Mbps bandwidth in WebRTC negotiation
+    function force60FpsSdp(sdp) {
+        if (!sdp || typeof sdp !== 'string') return sdp;
+        try {
+            const lines = sdp.split(/\r?\n/);
+            const output = [];
+            let inVideo = false;
+            let videoHasBitrate = false;
+
+            for (let i = 0; i < lines.length; i++) {
+                let line = lines[i];
+
+                if (line.startsWith('m=video')) {
+                    inVideo = true;
+                    videoHasBitrate = false;
+                    output.push(line);
+                    continue;
+                } else if (line.startsWith('m=')) {
+                    inVideo = false;
+                }
+
+                if (inVideo) {
+                    // Force high bandwidth allocation (25 Mbps)
+                    if (line.startsWith('b=AS:') || line.startsWith('b=TIAS:')) {
+                        output.push('b=AS:25000');
+                        videoHasBitrate = true;
+                        continue;
+                    }
+
+                    // Inject 60fps & 1080p frame size parameters into video fmtp lines
+                    if (line.startsWith('a=fmtp:')) {
+                        if (!line.includes('max-fr=') && !line.includes('max-fps=')) {
+                            line += ';max-fr=60;max-fps=60;min-fr=60';
+                        } else {
+                            line = line.replace(/max-fr=\d+/g, 'max-fr=60')
+                                       .replace(/max-fps=\d+/g, 'max-fps=60');
+                        }
+                        if (!line.includes('x-google-min-bitrate=')) {
+                            line += ';x-google-min-bitrate=15000;x-google-max-bitrate=25000;x-google-start-bitrate=20000';
+                        }
+                    }
+                }
+
+                output.push(line);
+
+                // If m=video didn't have b=AS, append it after c=IN line
+                if (inVideo && !videoHasBitrate && line.startsWith('c=IN')) {
+                    output.push('b=AS:25000');
+                    videoHasBitrate = true;
+                }
+            }
+            return output.join('\r\n');
+        } catch (err) {
+            console.error("[GFNxCloud] SDP optimization error", err);
+            return sdp;
+        }
+    }
+
+    // Hook RTCPeerConnection for SDP manipulation & optimal latency
+    if (window.RTCPeerConnection) {
+        const OrigPeerConnection = window.RTCPeerConnection;
+
+        const origSetRemoteDescription = OrigPeerConnection.prototype.setRemoteDescription;
+        OrigPeerConnection.prototype.setRemoteDescription = function(desc) {
+            if (desc && desc.sdp) {
+                try {
+                    const optimizedSdp = force60FpsSdp(desc.sdp);
+                    desc = new RTCSessionDescription({
+                        type: desc.type,
+                        sdp: optimizedSdp
+                    });
+                } catch (e) {
+                    console.warn("[GFNxCloud] Remote SDP rewrite skipped", e);
+                }
+            }
+            return origSetRemoteDescription.call(this, desc);
+        };
+
+        const origSetLocalDescription = OrigPeerConnection.prototype.setLocalDescription;
+        OrigPeerConnection.prototype.setLocalDescription = function(desc) {
+            if (desc && desc.sdp) {
+                try {
+                    const optimizedSdp = force60FpsSdp(desc.sdp);
+                    desc = new RTCSessionDescription({
+                        type: desc.type,
+                        sdp: optimizedSdp
+                    });
+                } catch (e) {
+                    console.warn("[GFNxCloud] Local SDP rewrite skipped", e);
+                }
+            }
+            return origSetLocalDescription.call(this, desc);
+        };
+
+        // Prefer motion hint on video tracks
+        const origAddTrack = OrigPeerConnection.prototype.addTrack;
+        if (origAddTrack) {
+            OrigPeerConnection.prototype.addTrack = function(track, ...streams) {
+                if (track && track.kind === 'video') {
+                    try {
+                        if ('contentHint' in track) track.contentHint = 'motion';
+                    } catch (e) {}
+                }
+                return origAddTrack.call(this, track, ...streams);
+            };
+        }
+    }
+
+    // 3. Monitor Video Elements, optimize hardware compositing layer, and calculate real-time FPS
+    function monitorStreamVideo() {
+        const videos = document.querySelectorAll('video');
+        videos.forEach(v => {
+            if (!v.__gfn_stream_optimized__) {
+                v.__gfn_stream_optimized__ = true;
+                v.playsInline = true;
+                v.disablePictureInPicture = true;
+                if ('disableRemotePlayback' in v) v.disableRemotePlayback = true;
+
+                // Force GPU layer composition
+                v.style.transform = 'translateZ(0)';
+                v.style.willChange = 'transform';
+
+                // Calculate real decoded stream FPS
+                let lastTime = performance.now();
+                let frames = 0;
+
+                function countFps(now, metadata) {
+                    frames++;
+                    const delta = now - lastTime;
+                    if (delta >= 1000) {
+                        const calculatedFps = Math.round((frames * 1000) / delta);
+                        frames = 0;
+                        lastTime = now;
+                        window.__streamFps = calculatedFps;
+                        if (window.AndroidBridge && window.AndroidBridge.updateFps) {
+                            try {
+                                window.AndroidBridge.updateFps(calculatedFps);
+                            } catch (e) {}
+                        }
+                    }
+                    if (v.requestVideoFrameCallback) {
+                        v.requestVideoFrameCallback(countFps);
+                    }
+                }
+
+                if (v.requestVideoFrameCallback) {
+                    v.requestVideoFrameCallback(countFps);
+                }
+            }
+        });
+    }
+
+    setInterval(monitorStreamVideo, 1200);
+
+    console.log("[GFNxCloud] Virtual Xbox Gamepad and 60+ FPS Optimizer ready");
 })();

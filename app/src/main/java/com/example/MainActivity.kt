@@ -82,17 +82,16 @@ class MainActivity : ComponentActivity() {
     private var webViewInstance: WebView? = null
     private var injectorScript: String = ""
     private val _loadingProgress = mutableIntStateOf(0)
+    private val _currentFps = mutableIntStateOf(60)
 
     companion object {
         const val XBOX_CLOUD_URL = "https://www.xbox.com/play"
 
-        // Authentic Google Chrome on Android Mobile User Agent.
-        // Prevents Microsoft Identity / Arkose Labs anti-bot lockout ("Too many incorrect attempts" / suspicious activity)
-        // caused when spoofing Windows desktop UA while running on an Android Linux/ARM environment.
-        const val CHROME_ANDROID_USER_AGENT =
-            "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.6778.200 Mobile Safari/537.36"
-
-        // Landscape/Tablet Android Chrome User Agent for widescreen game streaming on xCloud
+        // Authentic Landscape/Tablet Android Chrome User Agent.
+        // 1. Matches native Android Linux runtime (no Arkose Labs anti-bot flag or platform mismatch).
+        // 2. Stable across all OAuth and Xbox Live endpoints (login.live.com, sisu.xboxlive.com, xbox.com/auth/msa),
+        //    preventing Microsoft Identity token-binding mismatch and password verification loops.
+        // 3. Unlocks the widescreen landscape layout on xbox.com/play without mobile layout restrictions.
         const val CHROME_TABLET_USER_AGENT =
             "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.6778.200 Safari/537.36"
     }
@@ -104,14 +103,48 @@ class MainActivity : ComponentActivity() {
                 lower.contains("login.microsoftonline.com") ||
                 lower.contains("account.live.com") ||
                 lower.contains("account.microsoft.com") ||
+                lower.contains("xboxlive.com") ||
                 lower.contains("msauth") ||
                 lower.contains("msft") ||
                 lower.contains("oauth") ||
+                lower.contains("/auth") ||
+                lower.contains("auth.") ||
+                lower.contains("signin") ||
+                lower.contains("signup") ||
                 lower.contains("live.com")
+    }
+
+    private fun unlockHighRefreshRate() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val displayManager = getSystemService(Context.DISPLAY_SERVICE) as? android.hardware.display.DisplayManager
+                val currentDisplay = display ?: displayManager?.getDisplay(android.view.Display.DEFAULT_DISPLAY)
+                val maxMode = currentDisplay?.supportedModes?.maxByOrNull { it.refreshRate }
+                val params = window.attributes
+                if (maxMode != null) {
+                    params.preferredDisplayModeId = maxMode.modeId
+                    params.preferredRefreshRate = maxMode.refreshRate
+                }
+                window.attributes = params
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                @Suppress("DEPRECATION")
+                val currentDisplay = windowManager.defaultDisplay
+                @Suppress("DEPRECATION")
+                val maxMode = currentDisplay?.supportedModes?.maxByOrNull { it.refreshRate }
+                if (maxMode != null) {
+                    val params = window.attributes
+                    params.preferredDisplayModeId = maxMode.modeId
+                    window.attributes = params
+                }
+            }
+        } catch (e: Exception) {
+            // Fallback silently if device does not permit display mode switching
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        unlockHighRefreshRate()
         enableEdgeToEdge()
 
         // Keep screen on during cloud gameplay
@@ -147,6 +180,7 @@ class MainActivity : ComponentActivity() {
                 MainScreen(
                     stateManager = stateManager,
                     loadingProgress = _loadingProgress.intValue,
+                    fps = _currentFps.intValue,
                     onVibrate = { duration, strong, weak -> performVibration(duration, strong, weak) },
                     onHapticClick = { performHapticClick() },
                     getWebView = { getOrCreateWebView(this) }
@@ -200,8 +234,8 @@ class MainActivity : ComponentActivity() {
                 allowFileAccess = true
                 allowContentAccess = true
                 cacheMode = WebSettings.LOAD_DEFAULT
-                userAgentString = CHROME_ANDROID_USER_AGENT
-                setSupportMultipleWindows(true)
+                userAgentString = CHROME_TABLET_USER_AGENT
+                setSupportMultipleWindows(false)
                 javaScriptCanOpenWindowsAutomatically = true
                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -214,10 +248,27 @@ class MainActivity : ComponentActivity() {
             cookieManager.setAcceptThirdPartyCookies(this, true)
             CookieManager.setAcceptFileSchemeCookies(true)
 
-            // Inject the AndroidControllerBridge to allow synchronous polling from JS
-            val bridge = AndroidControllerBridge(stateManager) { duration, strong, weak ->
-                performVibration(duration, strong, weak)
+            // One-time automatic purge of previous corrupted/mismatched auth cookies
+            val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+            if (!prefs.getBoolean("msa_stable_ua_reset_v1", false)) {
+                cookieManager.removeAllCookies(null)
+                cookieManager.flush()
+                WebStorage.getInstance().deleteAllData()
+                prefs.edit().putBoolean("msa_stable_ua_reset_v1", true).apply()
             }
+
+            // Inject the AndroidControllerBridge to allow synchronous polling and live FPS telemetry from JS
+            val bridge = AndroidControllerBridge(
+                stateManager = stateManager,
+                onVibrateRequested = { duration, strong, weak ->
+                    performVibration(duration, strong, weak)
+                },
+                onFpsUpdated = { fps ->
+                    runOnUiThread {
+                        _currentFps.intValue = fps
+                    }
+                }
+            )
             addJavascriptInterface(bridge, "AndroidBridge")
 
             webChromeClient = object : WebChromeClient() {
@@ -228,19 +279,6 @@ class MainActivity : ComponentActivity() {
                 override fun onProgressChanged(view: WebView?, newProgress: Int) {
                     super.onProgressChanged(view, newProgress)
                     _loadingProgress.value = newProgress
-                }
-
-                override fun onCreateWindow(
-                    view: WebView?,
-                    isDialog: Boolean,
-                    isUserGesture: Boolean,
-                    resultMsg: Message?
-                ): Boolean {
-                    // Forward OAuth/login popup requests seamlessly inside the existing WebView
-                    val transport = resultMsg?.obj as? WebView.WebViewTransport
-                    transport?.webView = view
-                    resultMsg?.sendToTarget()
-                    return true
                 }
             }
 
@@ -263,25 +301,15 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
-                    // Dynamically set appropriate User Agent
-                    val urlStr = uri.toString()
-                    if (isAuthUrl(urlStr)) {
-                        view?.settings?.userAgentString = CHROME_ANDROID_USER_AGENT
-                    } else if (urlStr.contains("xbox.com")) {
-                        view?.settings?.userAgentString = CHROME_TABLET_USER_AGENT
-                    }
-
+                    // Flush cookies on navigation so tokens are immediately committed
+                    CookieManager.getInstance().flush()
                     return false
                 }
 
                 override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                     super.onPageStarted(view, url, favicon)
                     _loadingProgress.value = 10
-                    if (isAuthUrl(url)) {
-                        view?.settings?.userAgentString = CHROME_ANDROID_USER_AGENT
-                    } else {
-                        injectController(view)
-                    }
+                    CookieManager.getInstance().flush()
                 }
 
                 override fun onPageFinished(view: WebView?, url: String?) {
@@ -315,10 +343,10 @@ class MainActivity : ComponentActivity() {
     private fun injectController(view: WebView?) {
         val currentUrl = view?.url ?: ""
         // NEVER inject controller scripts into Microsoft login/authentication pages to prevent anti-bot DOM flags
-        if (isAuthUrl(currentUrl)) {
+        if (isAuthUrl(currentUrl) || currentUrl.contains("/auth")) {
             return
         }
-        if (injectorScript.isNotEmpty() && currentUrl.contains("xbox.com")) {
+        if (injectorScript.isNotEmpty() && currentUrl.contains("xbox.com") && currentUrl.contains("/play")) {
             view?.evaluateJavascript(injectorScript, null)
         }
     }
@@ -382,6 +410,7 @@ class MainActivity : ComponentActivity() {
 fun MainScreen(
     stateManager: ControllerStateManager,
     loadingProgress: Int = 0,
+    fps: Int = 60,
     onVibrate: (Long, Double, Double) -> Unit,
     onHapticClick: () -> Unit,
     getWebView: () -> WebView
@@ -389,6 +418,8 @@ fun MainScreen(
     var overlayOpacity by remember { mutableFloatStateOf(0.9f) }
     var hapticsEnabled by remember { mutableStateOf(true) }
     var isOverlayVisible by remember { mutableStateOf(true) }
+    var force60FpsEnabled by remember { mutableStateOf(true) }
+    var showFpsCounter by remember { mutableStateOf(true) }
     var showSettingsDialog by remember { mutableStateOf(false) }
     var currentPingMs by remember { mutableIntStateOf(32) }
 
@@ -467,6 +498,8 @@ fun MainScreen(
                 opacity = overlayOpacity,
                 hapticFeedbackEnabled = hapticsEnabled,
                 pingMs = currentPingMs,
+                fps = fps,
+                showFps = showFpsCounter,
                 onTriggerHaptic = onHapticClick,
                 onOpenSettings = { showSettingsDialog = true },
                 modifier = Modifier.testTag("gfn_controller_overlay")
@@ -500,6 +533,10 @@ fun MainScreen(
                 onHapticsToggle = { hapticsEnabled = it },
                 overlayVisible = isOverlayVisible,
                 onOverlayToggle = { isOverlayVisible = it },
+                force60FpsEnabled = force60FpsEnabled,
+                onForce60FpsToggle = { force60FpsEnabled = it },
+                showFpsCounter = showFpsCounter,
+                onShowFpsCounterToggle = { showFpsCounter = it },
                 onReloadPage = { webView.reload() },
                 onGoHome = { webView.loadUrl(MainActivity.XBOX_CLOUD_URL) },
                 onClearData = {

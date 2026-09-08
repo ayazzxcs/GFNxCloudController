@@ -2,6 +2,7 @@ package com.example.controller.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
@@ -52,6 +54,10 @@ fun SettingsDialog(
     onHapticsToggle: (Boolean) -> Unit,
     overlayVisible: Boolean,
     onOverlayToggle: (Boolean) -> Unit,
+    force60FpsEnabled: Boolean = true,
+    onForce60FpsToggle: (Boolean) -> Unit = {},
+    showFpsCounter: Boolean = true,
+    onShowFpsCounterToggle: (Boolean) -> Unit = {},
     onReloadPage: () -> Unit,
     onGoHome: () -> Unit,
     onClearData: () -> Unit = {},
@@ -224,7 +230,89 @@ fun SettingsDialog(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Force 60+ FPS & High Performance Stream Switch
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.CheckCircle,
+                                contentDescription = null,
+                                tint = Color(0xFF10B981),
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Force 60+ FPS & Max Bitrate",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        Text(
+                            text = "Forces 60fps SDP WebRTC negotiation, 25 Mbps bandwidth & 120Hz display refresh",
+                            color = Color(0xFF9CA3AF),
+                            fontSize = 11.sp,
+                            modifier = Modifier.padding(start = 26.dp, top = 2.dp)
+                        )
+                    }
+                    Switch(
+                        checked = force60FpsEnabled,
+                        onCheckedChange = onForce60FpsToggle,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = Color(0xFF107C10)
+                        ),
+                        modifier = Modifier.testTag("force_60fps_switch")
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Show Live Stream FPS Counter Switch
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(18.dp)
+                                .background(Color(0xFF10B981), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "60",
+                                color = Color.Black,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = "Show Live Stream FPS Badge",
+                            color = Color.White,
+                            fontSize = 14.sp
+                        )
+                    }
+                    Switch(
+                        checked = showFpsCounter,
+                        onCheckedChange = onShowFpsCounterToggle,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = Color(0xFF107C10)
+                        ),
+                        modifier = Modifier.testTag("fps_badge_switch")
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
 
                 // Actions: Reload and Go Home
                 Row(

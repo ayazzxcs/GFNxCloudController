@@ -129,6 +129,22 @@ class ControllerBridgeTest {
     }
 
     @Test
+    fun testAndroidBridgeFpsUpdate() {
+        val manager = ControllerStateManager()
+        var reportedFps = 0
+        val bridge = AndroidControllerBridge(
+            stateManager = manager,
+            onVibrateRequested = { _, _, _ -> },
+            onFpsUpdated = { fps -> reportedFps = fps }
+        )
+
+        bridge.updateFps(60)
+        assertEquals(60, reportedFps)
+        bridge.updateFps(120)
+        assertEquals(120, reportedFps)
+    }
+
+    @Test
     fun testJavaScriptInjectorAssetValid() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val script = context.assets.open("controller_injector.js").bufferedReader().use { it.readText() }
@@ -140,5 +156,7 @@ class ControllerBridgeTest {
         assertTrue(script.contains("window.onControllerInput"))
         assertTrue(script.contains("window.AndroidBridge"))
         assertTrue(script.contains("dual-rumble"))
+        assertTrue(script.contains("force60FpsSdp"))
+        assertTrue(script.contains("RTCPeerConnection"))
     }
 }

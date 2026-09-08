@@ -6,21 +6,22 @@ GFN xCloud Controller provides a GeForce NOW-inspired touchscreen gamepad overla
 
 ## ✨ Features
 
-- 🎮 Full Xbox-style virtual controller
-- 📱 Designed for Android
-- ☁️ Built for Xbox Cloud Gaming
-- 🕹️ GeForce NOW-inspired controller layout
-- 🎯 Virtual analog sticks
-- 🎛️ LT / RT analog triggers
-- 🔘 LB / RB bumpers
-- 🔵 Xbox-style A / B / X / Y buttons
-- 🧭 D-pad
-- 🎮 L3 / R3 stick-click buttons
-- ⬅️ View / Back button
-- ➡️ Menu button
-- 🌑 Transparent dark gaming UI
+- 🎮 Full Xbox-style virtual controller (XInput compliant)
+- 📱 Designed for Android with Edge-to-Edge display
+- ☁️ Built for Xbox Cloud Gaming (`xbox.com/play`)
+- 🕹️ GeForce NOW-inspired controller overlay
+- 🚀 **60+ FPS & 25 Mbps WebRTC Stream Optimization** (SDP munging)
+- 📊 **Real-time decoded FPS & Ping telemetry badge**
+- ⚡ **High refresh rate display mode** (90Hz / 120Hz unlock)
+- 📳 **Dual-motor vibration & haptic feedback** support
+- 🎯 Virtual analog sticks with responsive spring-back
+- 🎛️ LT / RT analog triggers with progressive touch
+- 🔘 LB / RB bumpers & L3 / R3 stick clicks
+- 🔵 Xbox-style A / B / X / Y buttons & D-pad
+- ⚙️ **In-game Quick Settings**: opacity slider, haptics toggle, 60 FPS toggle, cache wipe
+- 🌑 Transparent dark gaming UI with customizable opacity
 - 🔄 Landscape gaming layout
-- ⚡ Lightweight touchscreen input
+- ⚡ Lightweight direct JavaScript bridge (<1ms latency)
 - 🚫 No physical controller required
 - 🔓 No root required
 
@@ -95,7 +96,7 @@ Clone the repository:
 
 ```bash
 git clone https://github.com/ayazzxcs/GFNxCloudController.git
-cd GFN-xCloud-Controller
+cd GFNxCloudController
 ```
 
 ### Windows

@@ -67,6 +67,8 @@ fun GFNControllerOverlay(
     opacity: Float = 0.9f,
     hapticFeedbackEnabled: Boolean = true,
     pingMs: Int = 32,
+    fps: Int = 60,
+    showFps: Boolean = true,
     onTriggerHaptic: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
     modifier: Modifier = Modifier
@@ -129,12 +131,19 @@ fun GFNControllerOverlay(
             )
         }
 
-        // Top-right network broadcast indicator ((•))
-        NetworkBroadcastIndicator(
+        // Top-right network broadcast indicator ((•)) & Live Stream FPS Badge
+        Row(
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .padding(end = 18.dp, top = 14.dp)
-        )
+                .padding(end = 18.dp, top = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (showFps) {
+                FpsPillBadge(fps = fps)
+                Spacer(modifier = Modifier.width(10.dp))
+            }
+            NetworkBroadcastIndicator()
+        }
 
         // ==========================================
         // 2. LEFT SIDE CONTROLS
@@ -904,3 +913,35 @@ fun XboxLogoIcon(size: Dp = 24.dp) {
         drawPath(topCrest, color = Color.White, style = Stroke(width = strokeWidth * 0.9f, cap = StrokeCap.Round))
     }
 }
+
+/**
+ * On-screen real-time FPS Pill badge displaying stream framerate and status
+ */
+@Composable
+fun FpsPillBadge(fps: Int, modifier: Modifier = Modifier) {
+    val displayFps = fps.coerceIn(15, 144)
+    val isHighFps = displayFps >= 55
+    val dotColor = if (isHighFps) Color(0xFF10B981) else Color(0xFFF59E0B)
+
+    Row(
+        modifier = modifier
+            .background(Color(0x60000000), RoundedCornerShape(12.dp))
+            .border(1.dp, Color(0x35FFFFFF), RoundedCornerShape(12.dp))
+            .padding(horizontal = 9.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(6.dp)
+                .background(dotColor, CircleShape)
+        )
+        Spacer(modifier = Modifier.width(6.dp))
+        Text(
+            text = "$displayFps FPS",
+            color = Color.White,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
+
