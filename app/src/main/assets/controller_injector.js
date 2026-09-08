@@ -278,8 +278,58 @@
     }
 
     // Hook RTCPeerConnection for SDP manipulation & optimal latency
+    const activePeerConnections = new Set();
+    window.__activePeerConnections = activePeerConnections;
+
+    function optimizeReceiverLatency(receiver) {
+        if (!receiver) return;
+        try {
+            const reflexOn = (window.AndroidBridge && typeof window.AndroidBridge.isGfnReflexEnabled === 'function')
+                ? window.AndroidBridge.isGfnReflexEnabled()
+                : (window.__gfnReflexEnabled !== undefined ? window.__gfnReflexEnabled : true);
+
+            if (reflexOn) {
+                if ('playoutDelayHint' in receiver) {
+                    receiver.playoutDelayHint = 0;
+                }
+                if ('jitterBufferTarget' in receiver) {
+                    receiver.jitterBufferTarget = 0;
+                }
+            }
+        } catch (e) {}
+    }
+
+    function applyReflexToPeerConnection(pc) {
+        if (!pc) return;
+        try {
+            if (pc.getReceivers) {
+                pc.getReceivers().forEach(optimizeReceiverLatency);
+            }
+        } catch (e) {}
+    }
+
     if (window.RTCPeerConnection) {
         const OrigPeerConnection = window.RTCPeerConnection;
+
+        window.RTCPeerConnection = function(...args) {
+            const pc = new OrigPeerConnection(...args);
+            activePeerConnections.add(pc);
+
+            pc.addEventListener('connectionstatechange', () => {
+                if (pc.connectionState === 'closed' || pc.connectionState === 'failed') {
+                    activePeerConnections.delete(pc);
+                }
+            });
+
+            pc.addEventListener('track', (evt) => {
+                if (evt && evt.receiver) {
+                    optimizeReceiverLatency(evt.receiver);
+                }
+            });
+
+            return pc;
+        };
+        window.RTCPeerConnection.prototype = OrigPeerConnection.prototype;
 
         const origSetRemoteDescription = OrigPeerConnection.prototype.setRemoteDescription;
         OrigPeerConnection.prototype.setRemoteDescription = function(desc) {
@@ -294,7 +344,9 @@
                     console.warn("[GFNxCloud] Remote SDP rewrite skipped", e);
                 }
             }
-            return origSetRemoteDescription.call(this, desc);
+            const res = origSetRemoteDescription.call(this, desc);
+            applyReflexToPeerConnection(this);
+            return res;
         };
 
         const origSetLocalDescription = OrigPeerConnection.prototype.setLocalDescription;
@@ -313,6 +365,17 @@
             return origSetLocalDescription.call(this, desc);
         };
 
+        const origAddTransceiver = OrigPeerConnection.prototype.addTransceiver;
+        if (origAddTransceiver) {
+            OrigPeerConnection.prototype.addTransceiver = function(...args) {
+                const transceiver = origAddTransceiver.apply(this, args);
+                if (transceiver && transceiver.receiver) {
+                    optimizeReceiverLatency(transceiver.receiver);
+                }
+                return transceiver;
+            };
+        }
+
         // Prefer motion hint on video tracks
         const origAddTrack = OrigPeerConnection.prototype.addTrack;
         if (origAddTrack) {
@@ -327,10 +390,23 @@
         }
     }
 
+    // Periodic sweep ensuring newly established media tracks keep 0 jitter buffer delay
+    setInterval(() => {
+        activePeerConnections.forEach(applyReflexToPeerConnection);
+    }, 2000);
+
     // 3. Monitor Video Elements, optimize hardware compositing layer, and calculate real-time FPS
     window.__clarityBoostEnabled = (window.AndroidBridge && typeof window.AndroidBridge.isClarityBoostEnabled === 'function')
         ? window.AndroidBridge.isClarityBoostEnabled()
         : false;
+
+    window.__gfnVividEnabled = (window.AndroidBridge && typeof window.AndroidBridge.isGfnVividEnabled === 'function')
+        ? window.AndroidBridge.isGfnVividEnabled()
+        : true;
+
+    window.__gfnReflexEnabled = (window.AndroidBridge && typeof window.AndroidBridge.isGfnReflexEnabled === 'function')
+        ? window.AndroidBridge.isGfnReflexEnabled()
+        : true;
 
     function removeClarityBoostFilter() {
         try {
@@ -364,13 +440,28 @@
         }
     }
 
-    function applyClarityBoostToVideo(v) {
+    function applyVisualEnhancementsToVideo(v) {
         if (!v) return;
-        if (window.__clarityBoostEnabled) {
-            v.style.filter = 'url(#gfn-clarity-filter) contrast(1.04) saturate(1.04)';
+        const isClarity = !!window.__clarityBoostEnabled;
+        const isVivid = window.__gfnVividEnabled !== false;
+
+        const filters = [];
+        if (isClarity) {
+            filters.push('url(#gfn-clarity-filter)');
+        }
+        if (isVivid) {
+            // GeForce NOW Digital Vibrance Profile:
+            // Elevates flat 8-bit SDR stream with rich console/PC color saturation and deep dynamic contrast
+            filters.push('contrast(1.09) saturate(1.18) brightness(1.02)');
+        }
+
+        if (filters.length > 0) {
+            v.style.filter = filters.join(' ');
+            v.style.imageRendering = '-webkit-optimize-contrast';
         } else {
             v.style.filter = 'none';
             v.style.removeProperty('filter');
+            v.style.removeProperty('image-rendering');
             v.style.removeProperty('transform');
             v.style.removeProperty('willChange');
         }
@@ -384,8 +475,21 @@
             removeClarityBoostFilter();
         }
         const videos = document.querySelectorAll('video');
-        videos.forEach(applyClarityBoostToVideo);
+        videos.forEach(applyVisualEnhancementsToVideo);
         console.log("[GFNxCloud] Clarity Boost set to:", window.__clarityBoostEnabled);
+    };
+
+    window.setGfnVivid = function(enabled) {
+        window.__gfnVividEnabled = !!enabled;
+        const videos = document.querySelectorAll('video');
+        videos.forEach(applyVisualEnhancementsToVideo);
+        console.log("[GFNxCloud] GeForce NOW Vivid Mode set to:", window.__gfnVividEnabled);
+    };
+
+    window.setGfnReflex = function(enabled) {
+        window.__gfnReflexEnabled = !!enabled;
+        activePeerConnections.forEach(applyReflexToPeerConnection);
+        console.log("[GFNxCloud] GeForce NOW Reflex Ultra-Low Latency set to:", window.__gfnReflexEnabled);
     };
 
     window.__fpsCounterEnabled = (window.AndroidBridge && typeof window.AndroidBridge.isFpsCounterEnabled === 'function')
@@ -439,8 +543,9 @@
                 v.playsInline = true;
                 v.disablePictureInPicture = true;
                 if ('disableRemotePlayback' in v) v.disableRemotePlayback = true;
+                if ('preservesPitch' in v) v.preservesPitch = false;
 
-                applyClarityBoostToVideo(v);
+                applyVisualEnhancementsToVideo(v);
 
                 // Calculate real decoded stream FPS only when FPS counter is wanted
                 let lastTime = performance.now();

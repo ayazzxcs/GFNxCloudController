@@ -10,12 +10,14 @@ class AndroidControllerBridge(
     private val isForce60FpsEnabledProvider: (() -> Boolean)? = null,
     private val isFpsCounterEnabledProvider: (() -> Boolean)? = null,
     private val isVibrationEnabledProvider: (() -> Boolean)? = null,
-    private val onCancelVibrationRequested: (() -> Unit)? = null
+    private val onCancelVibrationRequested: (() -> Unit)? = null,
+    private val isGfnVividEnabledProvider: (() -> Boolean)? = null,
+    private val isGfnReflexEnabledProvider: (() -> Boolean)? = null
 ) {
     constructor(
         stateManager: ControllerStateManager,
         onVibrateRequested: (durationMs: Long, strongMagnitude: Double, weakMagnitude: Double) -> Unit
-    ) : this(stateManager, onVibrateRequested, null, null, null, null, null, null)
+    ) : this(stateManager, onVibrateRequested, null, null, null, null, null, null, null, null)
 
     @JavascriptInterface
     fun getGamepadState(): String {
@@ -25,6 +27,16 @@ class AndroidControllerBridge(
     @JavascriptInterface
     fun isVibrationEnabled(): Boolean {
         return isVibrationEnabledProvider?.invoke() ?: true
+    }
+
+    @JavascriptInterface
+    fun isGfnVividEnabled(): Boolean {
+        return isGfnVividEnabledProvider?.invoke() ?: true
+    }
+
+    @JavascriptInterface
+    fun isGfnReflexEnabled(): Boolean {
+        return isGfnReflexEnabledProvider?.invoke() ?: true
     }
 
     @JavascriptInterface

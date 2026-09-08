@@ -20,12 +20,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SportsEsports
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Vibration
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.Button
@@ -60,8 +63,14 @@ fun SettingsDialog(
     onHapticsToggle: (Boolean) -> Unit,
     overlayVisible: Boolean,
     onOverlayToggle: (Boolean) -> Unit,
+    gfnStickCurveEnabled: Boolean = true,
+    onGfnStickCurveToggle: (Boolean) -> Unit = {},
     force60FpsEnabled: Boolean = true,
     onForce60FpsToggle: (Boolean) -> Unit = {},
+    gfnReflexEnabled: Boolean = true,
+    onGfnReflexToggle: (Boolean) -> Unit = {},
+    gfnVividEnabled: Boolean = true,
+    onGfnVividToggle: (Boolean) -> Unit = {},
     clarityBoostEnabled: Boolean = true,
     onClarityBoostToggle: (Boolean) -> Unit = {},
     showFpsCounter: Boolean = true,
@@ -252,6 +261,48 @@ fun SettingsDialog(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
+                // GeForce NOW Reflex Stick Curve Switch
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Tune,
+                                contentDescription = null,
+                                tint = Color(0xFF76B900), // NVIDIA GeForce Green
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "GeForce NOW Reflex Stick Curve",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        Text(
+                            text = "Inner deadzone (0.04) and progressive curve for surgical micro-aiming without drift or lag",
+                            color = Color(0xFF9CA3AF),
+                            fontSize = 11.sp,
+                            modifier = Modifier.padding(start = 26.dp, top = 2.dp)
+                        )
+                    }
+                    Switch(
+                        checked = gfnStickCurveEnabled,
+                        onCheckedChange = onGfnStickCurveToggle,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = Color(0xFF76B900)
+                        ),
+                        modifier = Modifier.testTag("gfn_stick_curve_switch")
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
                 // Force 60+ FPS & High Performance Stream Switch
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -289,6 +340,90 @@ fun SettingsDialog(
                             checkedTrackColor = Color(0xFF107C10)
                         ),
                         modifier = Modifier.testTag("force_60fps_switch")
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // GeForce NOW Reflex Ultra-Low Latency Switch (Zero Jitter Buffer Queueing)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Bolt,
+                                contentDescription = null,
+                                tint = Color(0xFFF59E0B), // Amber bolt
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "GeForce NOW Reflex (0ms Jitter Buffer)",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        Text(
+                            text = "Bypasses WebRTC buffer delay (playoutDelayHint=0, jitterBufferTarget=0) for instant response",
+                            color = Color(0xFF9CA3AF),
+                            fontSize = 11.sp,
+                            modifier = Modifier.padding(start = 26.dp, top = 2.dp)
+                        )
+                    }
+                    Switch(
+                        checked = gfnReflexEnabled,
+                        onCheckedChange = onGfnReflexToggle,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = Color(0xFFF59E0B)
+                        ),
+                        modifier = Modifier.testTag("gfn_reflex_switch")
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // GeForce NOW Vivid Mode Switch (Digital Vibrance & Rich Contrast)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Palette,
+                                contentDescription = null,
+                                tint = Color(0xFFEC4899), // Pink / vibrant accent
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "GeForce NOW Vivid Colors & Contrast",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        Text(
+                            text = "Digital Vibrance profile enhancing dynamic range and punchy console colors",
+                            color = Color(0xFF9CA3AF),
+                            fontSize = 11.sp,
+                            modifier = Modifier.padding(start = 26.dp, top = 2.dp)
+                        )
+                    }
+                    Switch(
+                        checked = gfnVividEnabled,
+                        onCheckedChange = onGfnVividToggle,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = Color(0xFFEC4899)
+                        ),
+                        modifier = Modifier.testTag("gfn_vivid_switch")
                     )
                 }
 

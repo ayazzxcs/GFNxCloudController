@@ -173,18 +173,13 @@ class MainActivity : ComponentActivity() {
             e.printStackTrace()
         }
 
-        // Bridge state changes to WebView via evaluateJavascript
+        // Bridge state changes to WebView via evaluateJavascript (Fast Zero-Allocation IPC Path)
         stateManager.onStateChanged = { snapshot ->
             runOnUiThread {
-                webViewInstance?.let { webView ->
-                    val bArray = snapshot.buttons.joinToString(prefix = "[", postfix = "]") {
-                        String.format(Locale.US, "%.2f", it)
-                    }
-                    val aArray = snapshot.axes.joinToString(prefix = "[", postfix = "]") {
-                        String.format(Locale.US, "%.3f", it)
-                    }
-                    webView.evaluateJavascript("window.onControllerInput && window.onControllerInput($bArray, $aArray);", null)
-                }
+                webViewInstance?.evaluateJavascript(
+                    "window.onControllerInput && window.onControllerInput(${snapshot.fastJsArgs});",
+                    null
+                )
             }
         }
 
@@ -295,6 +290,12 @@ class MainActivity : ComponentActivity() {
                 },
                 onCancelVibrationRequested = {
                     cancelVibration()
+                },
+                isGfnVividEnabledProvider = {
+                    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean("gfn_vivid", true)
+                },
+                isGfnReflexEnabledProvider = {
+                    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean("gfn_reflex", true)
                 }
             )
             addJavascriptInterface(bridge, "AndroidBridge")
@@ -381,11 +382,15 @@ class MainActivity : ComponentActivity() {
                 val isFps = prefs.getBoolean("show_fps_counter", true)
                 val isForce60 = prefs.getBoolean("force_60fps", true)
                 val isHaptics = prefs.getBoolean("haptics_enabled", true)
+                val isGfnVivid = prefs.getBoolean("gfn_vivid", true)
+                val isGfnReflex = prefs.getBoolean("gfn_reflex", true)
                 view.evaluateJavascript(
                     "window.setClarityBoost && window.setClarityBoost($isClarity); " +
                     "window.setFpsCounterEnabled && window.setFpsCounterEnabled($isFps); " +
                     "window.setForce60Fps && window.setForce60Fps($isForce60); " +
-                    "window.setVibrationEnabled && window.setVibrationEnabled($isHaptics);",
+                    "window.setVibrationEnabled && window.setVibrationEnabled($isHaptics); " +
+                    "window.setGfnVivid && window.setGfnVivid($isGfnVivid); " +
+                    "window.setGfnReflex && window.setGfnReflex($isGfnReflex);",
                     null
                 )
             }
@@ -479,6 +484,9 @@ fun MainScreen(
     var force60FpsEnabled by remember { mutableStateOf(prefs.getBoolean("force_60fps", true)) }
     var clarityBoostEnabled by remember { mutableStateOf(prefs.getBoolean("clarity_boost", false)) }
     var showFpsCounter by remember { mutableStateOf(prefs.getBoolean("show_fps_counter", true)) }
+    var gfnVividEnabled by remember { mutableStateOf(prefs.getBoolean("gfn_vivid", true)) }
+    var gfnReflexEnabled by remember { mutableStateOf(prefs.getBoolean("gfn_reflex", true)) }
+    var gfnStickCurveEnabled by remember { mutableStateOf(prefs.getBoolean("gfn_stick_curve", true)) }
     var showSettingsDialog by remember { mutableStateOf(false) }
     var currentPingMs by remember { mutableIntStateOf(32) }
 
@@ -487,6 +495,16 @@ fun MainScreen(
     // Sync Clarity Boost toggle to WebView
     LaunchedEffect(clarityBoostEnabled) {
         webView.evaluateJavascript("window.setClarityBoost && window.setClarityBoost($clarityBoostEnabled);", null)
+    }
+
+    // Sync GeForce NOW Vivid Mode toggle to WebView
+    LaunchedEffect(gfnVividEnabled) {
+        webView.evaluateJavascript("window.setGfnVivid && window.setGfnVivid($gfnVividEnabled);", null)
+    }
+
+    // Sync GeForce NOW Reflex Ultra-Low Latency toggle to WebView
+    LaunchedEffect(gfnReflexEnabled) {
+        webView.evaluateJavascript("window.setGfnReflex && window.setGfnReflex($gfnReflexEnabled);", null)
     }
 
     // Sync FPS counter toggle to WebView
@@ -580,6 +598,7 @@ fun MainScreen(
                 stateManager = stateManager,
                 opacity = overlayOpacity,
                 hapticFeedbackEnabled = hapticsEnabled,
+                gfnStickCurve = gfnStickCurveEnabled,
                 pingMs = currentPingMs,
                 fps = fps,
                 showFps = showFpsCounter,
@@ -629,11 +648,26 @@ fun MainScreen(
                 },
                 overlayVisible = isOverlayVisible,
                 onOverlayToggle = { isOverlayVisible = it },
+                gfnStickCurveEnabled = gfnStickCurveEnabled,
+                onGfnStickCurveToggle = {
+                    gfnStickCurveEnabled = it
+                    prefs.edit().putBoolean("gfn_stick_curve", it).apply()
+                },
                 force60FpsEnabled = force60FpsEnabled,
                 onForce60FpsToggle = {
                     force60FpsEnabled = it
                     prefs.edit().putBoolean("force_60fps", it).apply()
                     (context as? MainActivity)?.setDisplayRefreshRate(it)
+                },
+                gfnReflexEnabled = gfnReflexEnabled,
+                onGfnReflexToggle = {
+                    gfnReflexEnabled = it
+                    prefs.edit().putBoolean("gfn_reflex", it).apply()
+                },
+                gfnVividEnabled = gfnVividEnabled,
+                onGfnVividToggle = {
+                    gfnVividEnabled = it
+                    prefs.edit().putBoolean("gfn_vivid", it).apply()
                 },
                 clarityBoostEnabled = clarityBoostEnabled,
                 onClarityBoostToggle = {

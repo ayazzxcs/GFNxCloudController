@@ -1,6 +1,7 @@
 package com.example.controller.ui
 
-import androidx.compose.animation.core.animateOffsetAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -21,6 +22,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -50,6 +52,7 @@ import com.example.controller.ControllerStateManager
 import com.example.controller.GamepadConstants
 import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
@@ -67,6 +70,7 @@ fun GFNControllerOverlay(
     stateManager: ControllerStateManager,
     opacity: Float = 0.9f,
     hapticFeedbackEnabled: Boolean = true,
+    gfnStickCurve: Boolean = true,
     pingMs: Int = 32,
     fps: Int = 60,
     showFps: Boolean = true,
@@ -252,6 +256,7 @@ fun GFNControllerOverlay(
         // Left Analog Stick (Dual concentric rings + tactile dot-matrix knob)
         AnalogThumbStick(
             isLeftStick = true,
+            gfnCurveEnabled = gfnStickCurve,
             onStickMove = { x, y -> stateManager.setStick(true, x, y) },
             modifier = Modifier
                 .align(Alignment.BottomStart)
@@ -363,6 +368,7 @@ fun GFNControllerOverlay(
         // Right Analog Stick (Dual concentric rings + tactile dot-matrix knob)
         AnalogThumbStick(
             isLeftStick = false,
+            gfnCurveEnabled = gfnStickCurve,
             onStickMove = { x, y -> stateManager.setStick(false, x, y) },
             modifier = Modifier
                 .align(Alignment.BottomEnd)
@@ -764,22 +770,33 @@ fun NetworkBroadcastIndicator(modifier: Modifier = Modifier) {
 @Composable
 fun AnalogThumbStick(
     isLeftStick: Boolean,
+    gfnCurveEnabled: Boolean = true,
     onStickMove: (x: Float, y: Float) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var rawOffset by remember { mutableStateOf(Offset.Zero) }
     var isDragging by remember { mutableStateOf(false) }
+    var releaseStartOffset by remember { mutableStateOf(Offset.Zero) }
+    val springAnim = remember { Animatable(Offset.Zero, Offset.VectorConverter) }
 
-    val animatedOffset by animateOffsetAsState(
-        targetValue = if (isDragging) rawOffset else Offset.Zero,
-        animationSpec = spring(dampingRatio = 0.65f, stiffness = 850f),
-        label = "stickSpring"
-    )
+    LaunchedEffect(isDragging) {
+        if (!isDragging) {
+            springAnim.snapTo(releaseStartOffset)
+            springAnim.animateTo(
+                targetValue = Offset.Zero,
+                animationSpec = spring(dampingRatio = 0.65f, stiffness = 950f)
+            )
+        }
+    }
+
+    // While dragging, stick follows touch position instantly (0ms delay).
+    // On release, stick snaps back toward center with physical spring elasticity.
+    val knobOffset = if (isDragging) rawOffset else springAnim.value
 
     Box(
         contentAlignment = Alignment.Center,
         modifier = modifier
-            .pointerInput(isLeftStick) {
+            .pointerInput(isLeftStick, gfnCurveEnabled) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     down.consume()
@@ -800,9 +817,28 @@ fun AnalogThumbStick(
                         } else Offset.Zero
 
                         rawOffset = clampedOffset
-                        val normX = (clampedOffset.x / maxTravelRadius).coerceIn(-1f, 1f)
-                        val normY = (clampedOffset.y / maxTravelRadius).coerceIn(-1f, 1f)
-                        onStickMove(normX, normY)
+                        releaseStartOffset = clampedOffset
+
+                        val rawNorm = (clampedDistance / maxTravelRadius).coerceIn(0f, 1f)
+                        if (gfnCurveEnabled) {
+                            // GeForce NOW Reflex Stick Response Curve:
+                            // 1. Inner deadzone (0.04) prevents resting finger micro-jitter / camera drift
+                            // 2. Progressive non-linear acceleration (power 1.15) provides surgical precision
+                            //    for micro-aiming while accelerating smoothly to 100% velocity at full deflection
+                            val deadZone = 0.04f
+                            val calibratedNorm = if (rawNorm > deadZone) {
+                                val scaled = (rawNorm - deadZone) / (1f - deadZone)
+                                scaled.pow(1.15f).coerceIn(0f, 1f)
+                            } else 0f
+
+                            val normX = if (rawNorm > 0f) (cos(angle) * calibratedNorm).coerceIn(-1f, 1f) else 0f
+                            val normY = if (rawNorm > 0f) (sin(angle) * calibratedNorm).coerceIn(-1f, 1f) else 0f
+                            onStickMove(normX, normY)
+                        } else {
+                            val normX = (clampedOffset.x / maxTravelRadius).coerceIn(-1f, 1f)
+                            val normY = (clampedOffset.y / maxTravelRadius).coerceIn(-1f, 1f)
+                            onStickMove(normX, normY)
+                        }
                     }
 
                     updatePosition(down.position)
@@ -850,7 +886,7 @@ fun AnalogThumbStick(
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
-                .offset { IntOffset(animatedOffset.x.roundToInt(), animatedOffset.y.roundToInt()) }
+                .offset { IntOffset(knobOffset.x.roundToInt(), knobOffset.y.roundToInt()) }
                 .size(knobSize)
                 .clip(CircleShape)
                 .background(Color(0xFFCBD5E1), CircleShape)

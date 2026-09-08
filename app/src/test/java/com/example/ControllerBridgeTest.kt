@@ -188,6 +188,20 @@ class ControllerBridgeTest {
         assertEquals(true, defaultBridge.isForce60FpsEnabled())
         assertEquals(true, defaultBridge.isFpsCounterEnabled())
         assertEquals(true, defaultBridge.isVibrationEnabled())
+        assertEquals(true, defaultBridge.isGfnVividEnabled())
+        assertEquals(true, defaultBridge.isGfnReflexEnabled())
+    }
+
+    @Test
+    fun testFastJsArgsEfficiency() {
+        val manager = ControllerStateManager()
+        manager.setButton(GamepadConstants.BTN_A, true)
+        manager.setStick(isLeft = true, x = 0.555f, y = -0.777f)
+
+        val snap = manager.getSnapshot()
+        val jsArgs = snap.fastJsArgs
+        assertTrue(jsArgs.startsWith("[1,"))
+        assertTrue(jsArgs.contains(", [0.555,-0.777,0,0]"))
     }
 
     @Test
@@ -231,5 +245,9 @@ class ControllerBridgeTest {
         assertTrue(script.contains("force60FpsSdp"))
         assertTrue(script.contains("RTCPeerConnection"))
         assertTrue(script.contains("window.setVibrationEnabled"))
+        assertTrue(script.contains("window.setGfnVivid"))
+        assertTrue(script.contains("window.setGfnReflex"))
+        assertTrue(script.contains("playoutDelayHint"))
+        assertTrue(script.contains("jitterBufferTarget"))
     }
 }
