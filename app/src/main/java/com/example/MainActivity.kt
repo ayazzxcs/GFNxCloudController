@@ -85,6 +85,7 @@ class MainActivity : ComponentActivity() {
     private val _currentFps = mutableIntStateOf(60)
 
     companion object {
+        const val PREFS_NAME = "gfn_settings"
         const val XBOX_CLOUD_URL = "https://www.xbox.com/play"
 
         // Landscape/Tablet Android Chrome & Edge User Agent.
@@ -114,29 +115,40 @@ class MainActivity : ComponentActivity() {
                 lower.contains("live.com")
     }
 
-    private fun unlockHighRefreshRate() {
+    fun setDisplayRefreshRate(highRefresh: Boolean) {
         try {
+            val params = window.attributes
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 val displayManager = getSystemService(Context.DISPLAY_SERVICE) as? android.hardware.display.DisplayManager
                 val currentDisplay = display ?: displayManager?.getDisplay(android.view.Display.DEFAULT_DISPLAY)
-                val maxMode = currentDisplay?.supportedModes?.maxByOrNull { it.refreshRate }
-                val params = window.attributes
-                if (maxMode != null) {
-                    params.preferredDisplayModeId = maxMode.modeId
-                    params.preferredRefreshRate = maxMode.refreshRate
+                val modes = currentDisplay?.supportedModes ?: emptyArray()
+                if (highRefresh) {
+                    val maxMode = modes.maxByOrNull { it.refreshRate }
+                    if (maxMode != null) {
+                        params.preferredDisplayModeId = maxMode.modeId
+                        params.preferredRefreshRate = maxMode.refreshRate
+                    }
+                } else {
+                    val mode60 = modes.firstOrNull { it.refreshRate in 58f..62f }
+                    params.preferredDisplayModeId = mode60?.modeId ?: 0
+                    params.preferredRefreshRate = 60f
                 }
-                window.attributes = params
             } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 @Suppress("DEPRECATION")
                 val currentDisplay = windowManager.defaultDisplay
                 @Suppress("DEPRECATION")
-                val maxMode = currentDisplay?.supportedModes?.maxByOrNull { it.refreshRate }
-                if (maxMode != null) {
-                    val params = window.attributes
-                    params.preferredDisplayModeId = maxMode.modeId
-                    window.attributes = params
+                val modes = currentDisplay?.supportedModes ?: emptyArray()
+                if (highRefresh) {
+                    val maxMode = modes.maxByOrNull { it.refreshRate }
+                    if (maxMode != null) {
+                        params.preferredDisplayModeId = maxMode.modeId
+                    }
+                } else {
+                    val mode60 = modes.firstOrNull { it.refreshRate in 58f..62f }
+                    params.preferredDisplayModeId = mode60?.modeId ?: 0
                 }
             }
+            window.attributes = params
         } catch (e: Exception) {
             // Fallback silently if device does not permit display mode switching
         }
@@ -144,7 +156,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        unlockHighRefreshRate()
+        val initialHighRefresh = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean("force_60fps", true)
+        setDisplayRefreshRate(initialHighRefresh)
         enableEdgeToEdge()
 
         // Keep screen on during cloud gameplay
@@ -267,6 +280,15 @@ class MainActivity : ComponentActivity() {
                     runOnUiThread {
                         _currentFps.intValue = fps
                     }
+                },
+                isClarityBoostEnabledProvider = {
+                    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean("clarity_boost", false)
+                },
+                isForce60FpsEnabledProvider = {
+                    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean("force_60fps", true)
+                },
+                isFpsCounterEnabledProvider = {
+                    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean("show_fps_counter", true)
                 }
             )
             addJavascriptInterface(bridge, "AndroidBridge")
@@ -347,7 +369,18 @@ class MainActivity : ComponentActivity() {
             return
         }
         if (injectorScript.isNotEmpty() && currentUrl.contains("xbox.com") && currentUrl.contains("/play")) {
-            view?.evaluateJavascript(injectorScript, null)
+            view?.evaluateJavascript(injectorScript) {
+                val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                val isClarity = prefs.getBoolean("clarity_boost", false)
+                val isFps = prefs.getBoolean("show_fps_counter", true)
+                val isForce60 = prefs.getBoolean("force_60fps", true)
+                view.evaluateJavascript(
+                    "window.setClarityBoost && window.setClarityBoost($isClarity); " +
+                    "window.setFpsCounterEnabled && window.setFpsCounterEnabled($isFps); " +
+                    "window.setForce60Fps && window.setForce60Fps($isForce60);",
+                    null
+                )
+            }
         }
     }
 
@@ -416,13 +449,13 @@ fun MainScreen(
     getWebView: () -> WebView
 ) {
     val context = LocalContext.current
-    val prefs = remember { context.getSharedPreferences("gfn_settings", Context.MODE_PRIVATE) }
+    val prefs = remember { context.getSharedPreferences(MainActivity.PREFS_NAME, Context.MODE_PRIVATE) }
 
     var overlayOpacity by remember { mutableFloatStateOf(prefs.getFloat("overlay_opacity", 0.9f)) }
     var hapticsEnabled by remember { mutableStateOf(prefs.getBoolean("haptics_enabled", true)) }
     var isOverlayVisible by remember { mutableStateOf(true) }
     var force60FpsEnabled by remember { mutableStateOf(prefs.getBoolean("force_60fps", true)) }
-    var clarityBoostEnabled by remember { mutableStateOf(prefs.getBoolean("clarity_boost", true)) }
+    var clarityBoostEnabled by remember { mutableStateOf(prefs.getBoolean("clarity_boost", false)) }
     var showFpsCounter by remember { mutableStateOf(prefs.getBoolean("show_fps_counter", true)) }
     var showSettingsDialog by remember { mutableStateOf(false) }
     var currentPingMs by remember { mutableIntStateOf(32) }
@@ -434,8 +467,19 @@ fun MainScreen(
         webView.evaluateJavascript("window.setClarityBoost && window.setClarityBoost($clarityBoostEnabled);", null)
     }
 
-    // Measure live latency to xbox.com
-    LaunchedEffect(Unit) {
+    // Sync FPS counter toggle to WebView
+    LaunchedEffect(showFpsCounter) {
+        webView.evaluateJavascript("window.setFpsCounterEnabled && window.setFpsCounterEnabled($showFpsCounter);", null)
+    }
+
+    // Sync Force 60+ FPS toggle to WebView
+    LaunchedEffect(force60FpsEnabled) {
+        webView.evaluateJavascript("window.setForce60Fps && window.setForce60Fps($force60FpsEnabled);", null)
+    }
+
+    // Measure live latency to xbox.com only when FPS/Ping badge is visible
+    LaunchedEffect(showFpsCounter) {
+        if (!showFpsCounter) return@LaunchedEffect
         withContext(Dispatchers.IO) {
             while (isActive) {
                 try {
@@ -452,7 +496,7 @@ fun MainScreen(
                     // Fallback to stable default if offline or throttled
                     currentPingMs = (28..36).random()
                 }
-                delay(6000)
+                delay(10000)
             }
         }
     }
@@ -556,6 +600,7 @@ fun MainScreen(
                 onForce60FpsToggle = {
                     force60FpsEnabled = it
                     prefs.edit().putBoolean("force_60fps", it).apply()
+                    (context as? MainActivity)?.setDisplayRefreshRate(it)
                 },
                 clarityBoostEnabled = clarityBoostEnabled,
                 onClarityBoostToggle = {

@@ -31,11 +31,35 @@ data class GamepadSnapshot(
     val buttons: FloatArray = FloatArray(17),
     val axes: FloatArray = FloatArray(4)
 ) {
-    fun toJson(): String {
-        val bJson = buttons.joinToString(prefix = "[", postfix = "]") { String.format(java.util.Locale.US, "%.2f", it) }
-        val aJson = axes.joinToString(prefix = "[", postfix = "]") { String.format(java.util.Locale.US, "%.3f", it) }
-        return """{"b":$bJson,"a":$aJson}"""
+    // Precomputed and cached JSON representation - avoids rebuilding JSON on every animation frame
+    val cachedJson: String by lazy {
+        val sb = java.lang.StringBuilder(128)
+        sb.append("""{"b":[""")
+        for (i in buttons.indices) {
+            val v = buttons[i]
+            when (v) {
+                0.0f -> sb.append("0")
+                1.0f -> sb.append("1")
+                else -> sb.append(String.format(java.util.Locale.US, "%.2f", v))
+            }
+            if (i < buttons.size - 1) sb.append(",")
+        }
+        sb.append("""],"a":[""")
+        for (i in axes.indices) {
+            val v = axes[i]
+            when (v) {
+                0.0f -> sb.append("0")
+                1.0f -> sb.append("1")
+                -1.0f -> sb.append("-1")
+                else -> sb.append(String.format(java.util.Locale.US, "%.3f", v))
+            }
+            if (i < axes.size - 1) sb.append(",")
+        }
+        sb.append("]}")
+        sb.toString()
     }
+
+    fun toJson(): String = cachedJson
 
     override fun equals(other: Any?): Boolean {
         if (this === other) return true

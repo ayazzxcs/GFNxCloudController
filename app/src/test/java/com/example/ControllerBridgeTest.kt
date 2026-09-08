@@ -145,6 +145,41 @@ class ControllerBridgeTest {
     }
 
     @Test
+    fun testAndroidBridgeFeatureProviders() {
+        val manager = ControllerStateManager()
+        var clarity = false
+        var force60 = true
+        var fpsCounter = true
+
+        val bridge = AndroidControllerBridge(
+            stateManager = manager,
+            onVibrateRequested = { _, _, _ -> },
+            onFpsUpdated = null,
+            isClarityBoostEnabledProvider = { clarity },
+            isForce60FpsEnabledProvider = { force60 },
+            isFpsCounterEnabledProvider = { fpsCounter }
+        )
+
+        assertEquals(false, bridge.isClarityBoostEnabled())
+        assertEquals(true, bridge.isForce60FpsEnabled())
+        assertEquals(true, bridge.isFpsCounterEnabled())
+
+        clarity = true
+        force60 = false
+        fpsCounter = false
+
+        assertEquals(true, bridge.isClarityBoostEnabled())
+        assertEquals(false, bridge.isForce60FpsEnabled())
+        assertEquals(false, bridge.isFpsCounterEnabled())
+
+        // Test null provider defaults
+        val defaultBridge = AndroidControllerBridge(manager) { _, _, _ -> }
+        assertEquals(false, defaultBridge.isClarityBoostEnabled())
+        assertEquals(true, defaultBridge.isForce60FpsEnabled())
+        assertEquals(true, defaultBridge.isFpsCounterEnabled())
+    }
+
+    @Test
     fun testJavaScriptInjectorAssetValid() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val script = context.assets.open("controller_injector.js").bufferedReader().use { it.readText() }

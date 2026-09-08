@@ -76,11 +76,13 @@
     window.__dispatchGamepadConnected = dispatchGamepadConnected;
 
     // Synchronize latest state directly from AndroidBridge if available
+    let lastRawGamepadState = "";
     function pollFromAndroid() {
         if (window.AndroidBridge && window.AndroidBridge.getGamepadState) {
             try {
                 const raw = window.AndroidBridge.getGamepadState();
-                if (raw) {
+                if (raw && raw !== lastRawGamepadState) {
+                    lastRawGamepadState = raw;
                     const state = JSON.parse(raw);
                     if (state.b) {
                         for (let i = 0; i < 17; i++) {
@@ -104,6 +106,7 @@
 
     // Direct fast-path called from Kotlin evaluateJavascript for instant reaction
     window.onControllerInput = function(buttons, axes) {
+        lastRawGamepadState = "";
         if (buttons && buttons.length >= 17) {
             for (let i = 0; i < 17; i++) {
                 const val = buttons[i];
@@ -194,6 +197,14 @@
             let inVideo = false;
             let videoHasBitrate = false;
 
+            const forceHigh = (window.AndroidBridge && typeof window.AndroidBridge.isForce60FpsEnabled === 'function')
+                ? window.AndroidBridge.isForce60FpsEnabled()
+                : (window.__force60FpsEnabled !== undefined ? window.__force60FpsEnabled : true);
+            const maxFr = forceHigh ? 120 : 60;
+            const maxBitrate = forceHigh ? 30000 : 12000;
+            const startBitrate = forceHigh ? 22000 : 8000;
+            const minBitrate = forceHigh ? 15000 : 4000;
+
             for (let i = 0; i < lines.length; i++) {
                 let line = lines[i];
 
@@ -207,23 +218,22 @@
                 }
 
                 if (inVideo) {
-                    // Force high bandwidth allocation (30 Mbps for 120 FPS / 1080p)
                     if (line.startsWith('b=AS:') || line.startsWith('b=TIAS:')) {
-                        output.push('b=AS:30000');
+                        output.push('b=AS:' + maxBitrate);
                         videoHasBitrate = true;
                         continue;
                     }
 
-                    // Inject 120fps & 1080p frame size parameters into video fmtp lines
                     if (line.startsWith('a=fmtp:')) {
                         if (!line.includes('max-fr=') && !line.includes('max-fps=')) {
-                            line += ';max-fr=120;max-fps=120;min-fr=60';
+                            line += ';max-fr=' + maxFr + ';max-fps=' + maxFr;
+                            if (forceHigh) line += ';min-fr=60';
                         } else {
-                            line = line.replace(/max-fr=\d+/g, 'max-fr=120')
-                                       .replace(/max-fps=\d+/g, 'max-fps=120');
+                            line = line.replace(/max-fr=\d+/g, 'max-fr=' + maxFr)
+                                       .replace(/max-fps=\d+/g, 'max-fps=' + maxFr);
                         }
                         if (!line.includes('x-google-min-bitrate=')) {
-                            line += ';x-google-min-bitrate=15000;x-google-max-bitrate=30000;x-google-start-bitrate=22000';
+                            line += ';x-google-min-bitrate=' + minBitrate + ';x-google-max-bitrate=' + maxBitrate + ';x-google-start-bitrate=' + startBitrate;
                         }
                     }
                 }
@@ -232,7 +242,7 @@
 
                 // If m=video didn't have b=AS, append it after c=IN line
                 if (inVideo && !videoHasBitrate && line.startsWith('c=IN')) {
-                    output.push('b=AS:30000');
+                    output.push('b=AS:' + maxBitrate);
                     videoHasBitrate = true;
                 }
             }
@@ -294,9 +304,21 @@
     }
 
     // 3. Monitor Video Elements, optimize hardware compositing layer, and calculate real-time FPS
-    window.__clarityBoostEnabled = true;
+    window.__clarityBoostEnabled = (window.AndroidBridge && typeof window.AndroidBridge.isClarityBoostEnabled === 'function')
+        ? window.AndroidBridge.isClarityBoostEnabled()
+        : false;
+
+    function removeClarityBoostFilter() {
+        try {
+            const svg = document.getElementById('gfn-clarity-boost-svg');
+            if (svg && svg.parentNode) {
+                svg.parentNode.removeChild(svg);
+            }
+        } catch (e) {}
+    }
 
     function injectClarityBoostFilter() {
+        if (!window.__clarityBoostEnabled) return;
         if (document.getElementById('gfn-clarity-boost-svg')) return;
         try {
             const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -324,19 +346,56 @@
             v.style.filter = 'url(#gfn-clarity-filter) contrast(1.04) saturate(1.04)';
         } else {
             v.style.filter = 'none';
+            v.style.removeProperty('filter');
+            v.style.removeProperty('transform');
+            v.style.removeProperty('willChange');
         }
     }
 
     window.setClarityBoost = function(enabled) {
         window.__clarityBoostEnabled = !!enabled;
-        injectClarityBoostFilter();
+        if (window.__clarityBoostEnabled) {
+            injectClarityBoostFilter();
+        } else {
+            removeClarityBoostFilter();
+        }
         const videos = document.querySelectorAll('video');
         videos.forEach(applyClarityBoostToVideo);
         console.log("[GFNxCloud] Clarity Boost set to:", window.__clarityBoostEnabled);
     };
 
+    window.__fpsCounterEnabled = (window.AndroidBridge && typeof window.AndroidBridge.isFpsCounterEnabled === 'function')
+        ? window.AndroidBridge.isFpsCounterEnabled()
+        : true;
+
+    window.setFpsCounterEnabled = function(enabled) {
+        window.__fpsCounterEnabled = !!enabled;
+        if (window.__fpsCounterEnabled) {
+            const videos = document.querySelectorAll('video');
+            videos.forEach(v => {
+                if (typeof v.__startFpsCounter === 'function') {
+                    v.__startFpsCounter();
+                }
+            });
+        }
+        console.log("[GFNxCloud] FPS counter set to:", window.__fpsCounterEnabled);
+    };
+
+    window.__force60FpsEnabled = (window.AndroidBridge && typeof window.AndroidBridge.isForce60FpsEnabled === 'function')
+        ? window.AndroidBridge.isForce60FpsEnabled()
+        : true;
+
+    window.setForce60Fps = function(enabled) {
+        window.__force60FpsEnabled = !!enabled;
+        console.log("[GFNxCloud] Force 60+ FPS set to:", window.__force60FpsEnabled);
+    };
+
     function monitorStreamVideo() {
-        injectClarityBoostFilter();
+        if (window.__clarityBoostEnabled) {
+            injectClarityBoostFilter();
+        } else {
+            removeClarityBoostFilter();
+        }
         const videos = document.querySelectorAll('video');
         videos.forEach(v => {
             if (!v.__gfn_stream_optimized__) {
@@ -345,16 +404,17 @@
                 v.disablePictureInPicture = true;
                 if ('disableRemotePlayback' in v) v.disableRemotePlayback = true;
 
-                // Force GPU layer composition
-                v.style.transform = 'translateZ(0)';
-                v.style.willChange = 'transform';
                 applyClarityBoostToVideo(v);
 
-                // Calculate real decoded stream FPS
+                // Calculate real decoded stream FPS only when FPS counter is wanted
                 let lastTime = performance.now();
                 let frames = 0;
 
                 function countFps(now, metadata) {
+                    if (!window.__fpsCounterEnabled) {
+                        v.__fpsCounterRunning = false;
+                        return;
+                    }
                     frames++;
                     const delta = now - lastTime;
                     if (delta >= 1000) {
@@ -368,13 +428,24 @@
                             } catch (e) {}
                         }
                     }
-                    if (v.requestVideoFrameCallback) {
+                    if (v.requestVideoFrameCallback && window.__fpsCounterEnabled) {
                         v.requestVideoFrameCallback(countFps);
+                    } else {
+                        v.__fpsCounterRunning = false;
                     }
                 }
 
-                if (v.requestVideoFrameCallback) {
-                    v.requestVideoFrameCallback(countFps);
+                v.__startFpsCounter = function() {
+                    if (!v.__fpsCounterRunning && v.requestVideoFrameCallback && window.__fpsCounterEnabled) {
+                        v.__fpsCounterRunning = true;
+                        frames = 0;
+                        lastTime = performance.now();
+                        v.requestVideoFrameCallback(countFps);
+                    }
+                };
+
+                if (window.__fpsCounterEnabled) {
+                    v.__startFpsCounter();
                 }
             }
         });
