@@ -150,6 +150,8 @@ class ControllerBridgeTest {
         var clarity = false
         var force60 = true
         var fpsCounter = true
+        var vibration = true
+        var cancelCalled = false
 
         val bridge = AndroidControllerBridge(
             stateManager = manager,
@@ -157,26 +159,61 @@ class ControllerBridgeTest {
             onFpsUpdated = null,
             isClarityBoostEnabledProvider = { clarity },
             isForce60FpsEnabledProvider = { force60 },
-            isFpsCounterEnabledProvider = { fpsCounter }
+            isFpsCounterEnabledProvider = { fpsCounter },
+            isVibrationEnabledProvider = { vibration },
+            onCancelVibrationRequested = { cancelCalled = true }
         )
 
         assertEquals(false, bridge.isClarityBoostEnabled())
         assertEquals(true, bridge.isForce60FpsEnabled())
         assertEquals(true, bridge.isFpsCounterEnabled())
+        assertEquals(true, bridge.isVibrationEnabled())
 
         clarity = true
         force60 = false
         fpsCounter = false
+        vibration = false
 
         assertEquals(true, bridge.isClarityBoostEnabled())
         assertEquals(false, bridge.isForce60FpsEnabled())
         assertEquals(false, bridge.isFpsCounterEnabled())
+        assertEquals(false, bridge.isVibrationEnabled())
+
+        bridge.cancelVibration()
+        assertTrue(cancelCalled)
 
         // Test null provider defaults
         val defaultBridge = AndroidControllerBridge(manager) { _, _, _ -> }
         assertEquals(false, defaultBridge.isClarityBoostEnabled())
         assertEquals(true, defaultBridge.isForce60FpsEnabled())
         assertEquals(true, defaultBridge.isFpsCounterEnabled())
+        assertEquals(true, defaultBridge.isVibrationEnabled())
+    }
+
+    @Test
+    fun testAndroidBridgeVibrateRespectsToggle() {
+        val manager = ControllerStateManager()
+        var vibrateCallCount = 0
+        var vibrationAllowed = true
+
+        val bridge = AndroidControllerBridge(
+            stateManager = manager,
+            onVibrateRequested = { _, _, _ -> vibrateCallCount++ },
+            onFpsUpdated = null,
+            isClarityBoostEnabledProvider = null,
+            isForce60FpsEnabledProvider = null,
+            isFpsCounterEnabledProvider = null,
+            isVibrationEnabledProvider = { vibrationAllowed }
+        )
+
+        bridge.vibrate(100, 0.5, 0.5)
+        assertEquals(1, vibrateCallCount)
+
+        // Turn vibration off
+        vibrationAllowed = false
+        bridge.vibrate(100, 0.5, 0.5)
+        // Should remain 1 because vibration was ignored!
+        assertEquals(1, vibrateCallCount)
     }
 
     @Test
@@ -193,5 +230,6 @@ class ControllerBridgeTest {
         assertTrue(script.contains("dual-rumble"))
         assertTrue(script.contains("force60FpsSdp"))
         assertTrue(script.contains("RTCPeerConnection"))
+        assertTrue(script.contains("window.setVibrationEnabled"))
     }
 }

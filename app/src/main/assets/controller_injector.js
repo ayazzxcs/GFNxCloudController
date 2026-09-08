@@ -35,10 +35,21 @@
         })),
         vibrationActuator: {
             type: "dual-rumble",
-            reset: function() { return Promise.resolve("complete"); },
+            reset: function() {
+                if (window.AndroidBridge && window.AndroidBridge.cancelVibration) {
+                    try { window.AndroidBridge.cancelVibration(); } catch (e) {}
+                }
+                return Promise.resolve("complete");
+            },
             playEffect: function(type, params) {
+                if (window.__vibrationEnabled === false) {
+                    return Promise.resolve("complete");
+                }
                 try {
                     if (window.AndroidBridge && window.AndroidBridge.vibrate) {
+                        if (typeof window.AndroidBridge.isVibrationEnabled === 'function' && !window.AndroidBridge.isVibrationEnabled()) {
+                            return Promise.resolve("complete");
+                        }
                         const duration = (params && params.duration) ? params.duration : 150;
                         const strong = (params && params.strongMagnitude) ? params.strongMagnitude : 0.5;
                         const weak = (params && params.weakMagnitude) ? params.weakMagnitude : 0.5;
@@ -51,6 +62,19 @@
             }
         },
         hapticActuators: []
+    };
+
+    // Override navigator.vibrate so any web/game stream calls respect the vibration setting
+    const _origVibrate = navigator.vibrate ? navigator.vibrate.bind(navigator) : null;
+    navigator.vibrate = function(pattern) {
+        if (window.__vibrationEnabled === false) return false;
+        if (window.AndroidBridge && typeof window.AndroidBridge.isVibrationEnabled === 'function') {
+            if (!window.AndroidBridge.isVibrationEnabled()) return false;
+        }
+        if (_origVibrate) {
+            try { return _origVibrate(pattern); } catch (e) { return false; }
+        }
+        return false;
     };
 
     window.__virtualGamepad = virtualGamepad;
@@ -388,6 +412,18 @@
     window.setForce60Fps = function(enabled) {
         window.__force60FpsEnabled = !!enabled;
         console.log("[GFNxCloud] Force 60+ FPS set to:", window.__force60FpsEnabled);
+    };
+
+    window.__vibrationEnabled = (window.AndroidBridge && typeof window.AndroidBridge.isVibrationEnabled === 'function')
+        ? window.AndroidBridge.isVibrationEnabled()
+        : true;
+
+    window.setVibrationEnabled = function(enabled) {
+        window.__vibrationEnabled = !!enabled;
+        if (!window.__vibrationEnabled && window.AndroidBridge && window.AndroidBridge.cancelVibration) {
+            try { window.AndroidBridge.cancelVibration(); } catch (e) {}
+        }
+        console.log("[GFNxCloud] Vibration set to:", window.__vibrationEnabled);
     };
 
     function monitorStreamVideo() {

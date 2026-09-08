@@ -289,6 +289,12 @@ class MainActivity : ComponentActivity() {
                 },
                 isFpsCounterEnabledProvider = {
                     context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean("show_fps_counter", true)
+                },
+                isVibrationEnabledProvider = {
+                    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean("haptics_enabled", true)
+                },
+                onCancelVibrationRequested = {
+                    cancelVibration()
                 }
             )
             addJavascriptInterface(bridge, "AndroidBridge")
@@ -374,10 +380,12 @@ class MainActivity : ComponentActivity() {
                 val isClarity = prefs.getBoolean("clarity_boost", false)
                 val isFps = prefs.getBoolean("show_fps_counter", true)
                 val isForce60 = prefs.getBoolean("force_60fps", true)
+                val isHaptics = prefs.getBoolean("haptics_enabled", true)
                 view.evaluateJavascript(
                     "window.setClarityBoost && window.setClarityBoost($isClarity); " +
                     "window.setFpsCounterEnabled && window.setFpsCounterEnabled($isFps); " +
-                    "window.setForce60Fps && window.setForce60Fps($isForce60);",
+                    "window.setForce60Fps && window.setForce60Fps($isForce60); " +
+                    "window.setVibrationEnabled && window.setVibrationEnabled($isHaptics);",
                     null
                 )
             }
@@ -399,6 +407,9 @@ class MainActivity : ComponentActivity() {
 
     private fun performHapticClick() {
         try {
+            val isHapticsEnabled = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean("haptics_enabled", true)
+            if (!isHapticsEnabled) return
+
             val vibrator = getVibrator()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 vibrator?.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK))
@@ -413,6 +424,9 @@ class MainActivity : ComponentActivity() {
 
     private fun performVibration(durationMs: Long, strongMagnitude: Double, weakMagnitude: Double) {
         try {
+            val isHapticsEnabled = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean("haptics_enabled", true)
+            if (!isHapticsEnabled) return
+
             val vibrator = getVibrator() ?: return
             val dur = durationMs.coerceIn(10, 1000)
             val amp = ((strongMagnitude + weakMagnitude) / 2.0 * 255.0).toInt().coerceIn(1, 255)
@@ -423,6 +437,14 @@ class MainActivity : ComponentActivity() {
                 @Suppress("DEPRECATION")
                 vibrator.vibrate(dur)
             }
+        } catch (e: Exception) {
+            // Ignore
+        }
+    }
+
+    fun cancelVibration() {
+        try {
+            getVibrator()?.cancel()
         } catch (e: Exception) {
             // Ignore
         }
@@ -475,6 +497,14 @@ fun MainScreen(
     // Sync Force 60+ FPS toggle to WebView
     LaunchedEffect(force60FpsEnabled) {
         webView.evaluateJavascript("window.setForce60Fps && window.setForce60Fps($force60FpsEnabled);", null)
+    }
+
+    // Sync Vibration toggle to WebView and cancel vibration immediately when turned off
+    LaunchedEffect(hapticsEnabled) {
+        webView.evaluateJavascript("window.setVibrationEnabled && window.setVibrationEnabled($hapticsEnabled);", null)
+        if (!hapticsEnabled) {
+            (context as? MainActivity)?.cancelVibration()
+        }
     }
 
     // Measure live latency to xbox.com only when FPS/Ping badge is visible
@@ -593,6 +623,9 @@ fun MainScreen(
                 onHapticsToggle = {
                     hapticsEnabled = it
                     prefs.edit().putBoolean("haptics_enabled", it).apply()
+                    if (!it) {
+                        (context as? MainActivity)?.cancelVibration()
+                    }
                 },
                 overlayVisible = isOverlayVisible,
                 onOverlayToggle = { isOverlayVisible = it },
