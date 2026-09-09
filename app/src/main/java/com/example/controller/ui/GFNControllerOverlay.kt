@@ -260,8 +260,8 @@ fun GFNControllerOverlay(
             onStickMove = { x, y -> stateManager.setStick(true, x, y) },
             modifier = Modifier
                 .align(Alignment.BottomStart)
-                .padding(start = 142.dp, bottom = 10.dp)
-                .size(168.dp)
+                .padding(start = 154.dp, bottom = 22.dp)
+                .size(144.dp)
                 .testTag("left_analog_stick")
         )
 
@@ -372,8 +372,8 @@ fun GFNControllerOverlay(
             onStickMove = { x, y -> stateManager.setStick(false, x, y) },
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .padding(end = 142.dp, bottom = 10.dp)
-                .size(168.dp)
+                .padding(end = 154.dp, bottom = 22.dp)
+                .size(144.dp)
                 .testTag("right_analog_stick")
         )
     }
@@ -882,7 +882,7 @@ fun AnalogThumbStick(
         }
 
         // Thumb Knob with tactile dot-matrix grip disc (exact match to screenshot)
-        val knobSize = 70.dp
+        val knobSize = 60.dp
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
@@ -893,8 +893,8 @@ fun AnalogThumbStick(
                 .border(2.dp, Color(0xFFE2E8F0), CircleShape)
         ) {
             // Tactile 4x4 dot-matrix grip pattern on knob
-            Canvas(modifier = Modifier.size(34.dp)) {
-                val dotRadius = 1.35.dp.toPx()
+            Canvas(modifier = Modifier.size(29.dp)) {
+                val dotRadius = 1.2.dp.toPx()
                 val dotColor = Color(0xFF64748B)
                 val rows = 4
                 val cols = 4
