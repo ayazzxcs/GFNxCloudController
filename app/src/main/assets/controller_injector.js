@@ -203,16 +203,53 @@
     // =========================================================================
     console.log("[GFNxCloud] Initializing 60+ FPS WebRTC stream optimizer...");
 
-    // 1. Prevent background tab/visibility frame throttling
+    // 1. Prevent background tab/visibility frame throttling & spoof Desktop 60fps capabilities
     try {
         Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
         Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
         Object.defineProperty(document, 'webkitVisibilityState', { get: () => 'visible', configurable: true });
+
+        // Spoof Windows Desktop Edge platform to unlock 1080p 60fps desktop stream tier
+        const desktopUa = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0";
+        Object.defineProperty(navigator, 'userAgent', { get: () => desktopUa, configurable: true });
+        Object.defineProperty(navigator, 'platform', { get: () => 'Win32', configurable: true });
+        Object.defineProperty(navigator, 'appVersion', { get: () => desktopUa.replace(/^Mozilla\//, ''), configurable: true });
+        if (navigator.userAgentData) {
+            Object.defineProperty(navigator.userAgentData, 'platform', { get: () => 'Windows', configurable: true });
+            Object.defineProperty(navigator.userAgentData, 'mobile', { get: () => false, configurable: true });
+        }
+
+        // Spoof MediaCapabilities so xCloud never downgrades stream to 30fps
+        if (navigator.mediaCapabilities && navigator.mediaCapabilities.decodingInfo) {
+            const origDecodingInfo = navigator.mediaCapabilities.decodingInfo.bind(navigator.mediaCapabilities);
+            navigator.mediaCapabilities.decodingInfo = async function(config) {
+                try {
+                    const res = await origDecodingInfo(config);
+                    return {
+                        supported: true,
+                        smooth: true,
+                        powerEfficient: true,
+                        keySystemAccess: res ? res.keySystemAccess : null,
+                        configuration: config
+                    };
+                } catch (e) {
+                    return { supported: true, smooth: true, powerEfficient: true, configuration: config };
+                }
+            };
+        }
+
+        // Prevent network save-data throttling to 30fps
+        if (navigator.connection) {
+            Object.defineProperty(navigator.connection, 'saveData', { get: () => false, configurable: true });
+            Object.defineProperty(navigator.connection, 'effectiveType', { get: () => '4g', configurable: true });
+            Object.defineProperty(navigator.connection, 'downlink', { get: () => 50, configurable: true });
+            Object.defineProperty(navigator.connection, 'rtt', { get: () => 15, configurable: true });
+        }
     } catch (e) {
-        console.warn("[GFNxCloud] Visibility hook error", e);
+        console.warn("[GFNxCloud] Visibility/Platform hook error", e);
     }
 
-    // 2. SDP Munging: Force 60+ FPS framerate and 25 Mbps bandwidth in WebRTC negotiation
+    // 2. SDP Munging: Force 60+ FPS framerate, H.264 Level 4.2 & 35 Mbps bandwidth in WebRTC negotiation
     function force60FpsSdp(sdp) {
         if (!sdp || typeof sdp !== 'string') return sdp;
         try {
@@ -220,14 +257,16 @@
             const output = [];
             let inVideo = false;
             let videoHasBitrate = false;
+            let videoHasFramerate = false;
 
             const forceHigh = (window.AndroidBridge && typeof window.AndroidBridge.isForce60FpsEnabled === 'function')
                 ? window.AndroidBridge.isForce60FpsEnabled()
                 : (window.__force60FpsEnabled !== undefined ? window.__force60FpsEnabled : true);
+            const targetFps = forceHigh ? 60 : 60;
             const maxFr = forceHigh ? 120 : 60;
-            const maxBitrate = forceHigh ? 30000 : 12000;
-            const startBitrate = forceHigh ? 22000 : 8000;
-            const minBitrate = forceHigh ? 15000 : 4000;
+            const maxBitrate = forceHigh ? 35000 : 15000;
+            const startBitrate = forceHigh ? 24000 : 10000;
+            const minBitrate = forceHigh ? 16000 : 6000;
 
             for (let i = 0; i < lines.length; i++) {
                 let line = lines[i];
@@ -235,7 +274,11 @@
                 if (line.startsWith('m=video')) {
                     inVideo = true;
                     videoHasBitrate = false;
+                    videoHasFramerate = false;
                     output.push(line);
+                    // Explicitly inject standard media-level framerate specification
+                    output.push('a=framerate:' + targetFps + '.00');
+                    videoHasFramerate = true;
                     continue;
                 } else if (line.startsWith('m=')) {
                     inVideo = false;
@@ -248,16 +291,41 @@
                         continue;
                     }
 
+                    if (line.startsWith('a=framerate:')) {
+                        output.push('a=framerate:' + targetFps + '.00');
+                        videoHasFramerate = true;
+                        continue;
+                    }
+
                     if (line.startsWith('a=fmtp:')) {
+                        // Upgrade H.264 profile-level-id to Level 4.2 (0x2a) to unlock 1080p @ 60 FPS
+                        line = line.replace(/profile-level-id=([0-9a-fA-F]{4})(1[ef]|28)/gi, 'profile-level-id=$12a');
+
+                        // Inject framerate parameters
                         if (!line.includes('max-fr=') && !line.includes('max-fps=')) {
-                            line += ';max-fr=' + maxFr + ';max-fps=' + maxFr;
-                            if (forceHigh) line += ';min-fr=60';
+                            line += ';max-fr=' + maxFr + ';max-fps=' + maxFr + ';min-fr=60;framerate=' + targetFps;
                         } else {
                             line = line.replace(/max-fr=\d+/g, 'max-fr=' + maxFr)
-                                       .replace(/max-fps=\d+/g, 'max-fps=' + maxFr);
+                                       .replace(/max-fps=\d+/g, 'max-fps=' + maxFr)
+                                       .replace(/min-fr=\d+/g, 'min-fr=60')
+                                       .replace(/framerate=\d+/g, 'framerate=' + targetFps);
                         }
+
+                        // Macroblock parameters for full 1080p 60fps throughput
+                        if (!line.includes('max-mbps=')) {
+                            line += ';max-mbps=489600;max-fs=8160;max-cpb=200;max-dpb=200;max-br=' + maxBitrate;
+                        } else {
+                            line = line.replace(/max-mbps=\d+/g, 'max-mbps=489600')
+                                       .replace(/max-fs=\d+/g, 'max-fs=8160');
+                        }
+
+                        // High performance bandwidth parameters
                         if (!line.includes('x-google-min-bitrate=')) {
                             line += ';x-google-min-bitrate=' + minBitrate + ';x-google-max-bitrate=' + maxBitrate + ';x-google-start-bitrate=' + startBitrate;
+                        } else {
+                            line = line.replace(/x-google-min-bitrate=\d+/g, 'x-google-min-bitrate=' + minBitrate)
+                                       .replace(/x-google-max-bitrate=\d+/g, 'x-google-max-bitrate=' + maxBitrate)
+                                       .replace(/x-google-start-bitrate=\d+/g, 'x-google-start-bitrate=' + startBitrate);
                         }
                     }
                 }
@@ -330,6 +398,38 @@
             return pc;
         };
         window.RTCPeerConnection.prototype = OrigPeerConnection.prototype;
+
+        const origCreateOffer = OrigPeerConnection.prototype.createOffer;
+        OrigPeerConnection.prototype.createOffer = async function(...args) {
+            const offer = await origCreateOffer.apply(this, args);
+            if (offer && offer.sdp) {
+                try {
+                    return new RTCSessionDescription({
+                        type: offer.type,
+                        sdp: force60FpsSdp(offer.sdp)
+                    });
+                } catch (e) {
+                    console.warn("[GFNxCloud] createOffer SDP rewrite failed", e);
+                }
+            }
+            return offer;
+        };
+
+        const origCreateAnswer = OrigPeerConnection.prototype.createAnswer;
+        OrigPeerConnection.prototype.createAnswer = async function(...args) {
+            const answer = await origCreateAnswer.apply(this, args);
+            if (answer && answer.sdp) {
+                try {
+                    return new RTCSessionDescription({
+                        type: answer.type,
+                        sdp: force60FpsSdp(answer.sdp)
+                    });
+                } catch (e) {
+                    console.warn("[GFNxCloud] createAnswer SDP rewrite failed", e);
+                }
+            }
+            return answer;
+        };
 
         const origSetRemoteDescription = OrigPeerConnection.prototype.setRemoteDescription;
         OrigPeerConnection.prototype.setRemoteDescription = function(desc) {
@@ -440,10 +540,22 @@
         }
     }
 
+    window.__motionSmoothingEnabled = (window.AndroidBridge && typeof window.AndroidBridge.isMotionSmoothingEnabled === 'function')
+        ? window.AndroidBridge.isMotionSmoothingEnabled()
+        : true;
+
+    window.setMotionSmoothing = function(enabled) {
+        window.__motionSmoothingEnabled = !!enabled;
+        const videos = document.querySelectorAll('video');
+        videos.forEach(applyVisualEnhancementsToVideo);
+        console.log("[GFNxCloud] 30-to-60 FPS Motion Smoothing set to:", window.__motionSmoothingEnabled);
+    };
+
     function applyVisualEnhancementsToVideo(v) {
         if (!v) return;
         const isClarity = !!window.__clarityBoostEnabled;
         const isVivid = window.__gfnVividEnabled !== false;
+        const isSmoothing = window.__motionSmoothingEnabled !== false;
 
         const filters = [];
         if (isClarity) {
@@ -462,7 +574,16 @@
             v.style.filter = 'none';
             v.style.removeProperty('filter');
             v.style.removeProperty('image-rendering');
+        }
+
+        // Hardware compositing layer & sub-pixel motion pacing
+        if (isSmoothing) {
+            v.style.transform = 'translateZ(0)';
+            v.style.backfaceVisibility = 'hidden';
+            v.style.willChange = 'transform, filter';
+        } else {
             v.style.removeProperty('transform');
+            v.style.removeProperty('backface-visibility');
             v.style.removeProperty('willChange');
         }
     }

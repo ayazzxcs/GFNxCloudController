@@ -296,6 +296,9 @@ class MainActivity : ComponentActivity() {
                 },
                 isGfnReflexEnabledProvider = {
                     context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean("gfn_reflex", true)
+                },
+                isMotionSmoothingEnabledProvider = {
+                    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean("motion_smoothing", true)
                 }
             )
             addJavascriptInterface(bridge, "AndroidBridge")
@@ -384,13 +387,15 @@ class MainActivity : ComponentActivity() {
                 val isHaptics = prefs.getBoolean("haptics_enabled", true)
                 val isGfnVivid = prefs.getBoolean("gfn_vivid", true)
                 val isGfnReflex = prefs.getBoolean("gfn_reflex", true)
+                val isMotionSmoothing = prefs.getBoolean("motion_smoothing", true)
                 view.evaluateJavascript(
                     "window.setClarityBoost && window.setClarityBoost($isClarity); " +
                     "window.setFpsCounterEnabled && window.setFpsCounterEnabled($isFps); " +
                     "window.setForce60Fps && window.setForce60Fps($isForce60); " +
                     "window.setVibrationEnabled && window.setVibrationEnabled($isHaptics); " +
                     "window.setGfnVivid && window.setGfnVivid($isGfnVivid); " +
-                    "window.setGfnReflex && window.setGfnReflex($isGfnReflex);",
+                    "window.setGfnReflex && window.setGfnReflex($isGfnReflex); " +
+                    "window.setMotionSmoothing && window.setMotionSmoothing($isMotionSmoothing);",
                     null
                 )
             }
@@ -482,6 +487,7 @@ fun MainScreen(
     var hapticsEnabled by remember { mutableStateOf(prefs.getBoolean("haptics_enabled", true)) }
     var isOverlayVisible by remember { mutableStateOf(true) }
     var force60FpsEnabled by remember { mutableStateOf(prefs.getBoolean("force_60fps", true)) }
+    var motionSmoothingEnabled by remember { mutableStateOf(prefs.getBoolean("motion_smoothing", true)) }
     var clarityBoostEnabled by remember { mutableStateOf(prefs.getBoolean("clarity_boost", false)) }
     var showFpsCounter by remember { mutableStateOf(prefs.getBoolean("show_fps_counter", true)) }
     var gfnVividEnabled by remember { mutableStateOf(prefs.getBoolean("gfn_vivid", true)) }
@@ -505,6 +511,11 @@ fun MainScreen(
     // Sync GeForce NOW Reflex Ultra-Low Latency toggle to WebView
     LaunchedEffect(gfnReflexEnabled) {
         webView.evaluateJavascript("window.setGfnReflex && window.setGfnReflex($gfnReflexEnabled);", null)
+    }
+
+    // Sync 30-to-60 FPS Motion Smoothing toggle to WebView
+    LaunchedEffect(motionSmoothingEnabled) {
+        webView.evaluateJavascript("window.setMotionSmoothing && window.setMotionSmoothing($motionSmoothingEnabled);", null)
     }
 
     // Sync FPS counter toggle to WebView
@@ -658,6 +669,11 @@ fun MainScreen(
                     force60FpsEnabled = it
                     prefs.edit().putBoolean("force_60fps", it).apply()
                     (context as? MainActivity)?.setDisplayRefreshRate(it)
+                },
+                motionSmoothingEnabled = motionSmoothingEnabled,
+                onMotionSmoothingToggle = {
+                    motionSmoothingEnabled = it
+                    prefs.edit().putBoolean("motion_smoothing", it).apply()
                 },
                 gfnReflexEnabled = gfnReflexEnabled,
                 onGfnReflexToggle = {

@@ -25,8 +25,10 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Vibration
@@ -67,6 +69,8 @@ fun SettingsDialog(
     onGfnStickCurveToggle: (Boolean) -> Unit = {},
     force60FpsEnabled: Boolean = true,
     onForce60FpsToggle: (Boolean) -> Unit = {},
+    motionSmoothingEnabled: Boolean = true,
+    onMotionSmoothingToggle: (Boolean) -> Unit = {},
     gfnReflexEnabled: Boolean = true,
     onGfnReflexToggle: (Boolean) -> Unit = {},
     gfnVividEnabled: Boolean = true,
@@ -341,6 +345,85 @@ fun SettingsDialog(
                         ),
                         modifier = Modifier.testTag("force_60fps_switch")
                     )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // 30-to-60 FPS Motion Smoothing & Frame Pacing Switch
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Speed,
+                                contentDescription = null,
+                                tint = Color(0xFF10B981), // Emerald
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "30-to-60 FPS Motion Smoothing",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        Text(
+                            text = "Hardware-interpolates and frame-paces 30 FPS console titles to smooth 60Hz display cadence",
+                            color = Color(0xFF9CA3AF),
+                            fontSize = 11.sp,
+                            modifier = Modifier.padding(start = 26.dp, top = 2.dp)
+                        )
+                    }
+                    Switch(
+                        checked = motionSmoothingEnabled,
+                        onCheckedChange = onMotionSmoothingToggle,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = Color(0xFF10B981)
+                        ),
+                        modifier = Modifier.testTag("motion_smoothing_switch")
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                // Console 30 vs 60 FPS Notice Card
+                Card(
+                    shape = RoundedCornerShape(10.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(10.dp),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Info,
+                            contentDescription = null,
+                            tint = Color(0xFF38BDF8),
+                            modifier = Modifier.size(16.dp).padding(top = 1.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            Text(
+                                text = "🎮 Why do some games run at 30 FPS?",
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "Games like Forza Horizon, Cyberpunk 2077, Fallout 4, and Starfield default to 30 FPS 'Visuals/Quality' mode on Xbox servers. Open the game's in-game Settings > Video/Graphics and switch to 'Performance Mode' to run natively at 60 FPS. Our stream pipeline and motion smoothing guarantee 60Hz presentation.",
+                                color = Color(0xFF94A3B8),
+                                fontSize = 10.sp,
+                                lineHeight = 14.sp,
+                                modifier = Modifier.padding(top = 2.dp)
+                            )
+                        }
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))

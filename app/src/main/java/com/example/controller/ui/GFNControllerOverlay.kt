@@ -970,7 +970,19 @@ fun FpsPillBadge(
 ) {
     val displayFps = fps.coerceIn(15, 144)
     val isHighFps = displayFps >= 55
-    val dotColor = if (isHighFps) Color(0xFF10B981) else Color(0xFFF59E0B)
+    val isConsole30Fps = displayFps in 27..33
+    val dotColor = when {
+        isHighFps -> Color(0xFF10B981) // Emerald Green
+        isConsole30Fps -> Color(0xFF10B981) // Smooth 60Hz cadence with 30 FPS title
+        displayFps < 25 -> Color(0xFFEF4444) // Red
+        else -> Color(0xFFF59E0B) // Amber
+    }
+
+    val badgeText = when {
+        isHighFps -> "$displayFps FPS"
+        isConsole30Fps -> "60Hz • 30 FPS"
+        else -> "$displayFps FPS"
+    }
 
     Row(
         modifier = modifier
@@ -989,7 +1001,7 @@ fun FpsPillBadge(
         )
         Spacer(modifier = Modifier.width(6.dp))
         Text(
-            text = "$displayFps FPS",
+            text = badgeText,
             color = Color.White,
             fontSize = 11.sp,
             fontWeight = FontWeight.Bold
