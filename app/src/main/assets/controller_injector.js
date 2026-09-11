@@ -529,8 +529,8 @@
             svg.style.pointerEvents = 'none';
             svg.innerHTML = `
                 <defs>
-                    <filter id="gfn-clarity-filter">
-                        <feConvolveMatrix order="3" preserveAlpha="true" kernelMatrix="0 -0.35 0 -0.35 2.4 -0.35 0 -0.35 0"/>
+                    <filter id="gfn-clarity-filter" color-interpolation-filters="sRGB" x="0%" y="0%" width="100%" height="100%">
+                        <feConvolveMatrix order="3" preserveAlpha="true" kernelMatrix="0 -0.10 0 -0.10 1.40 -0.10 0 -0.10 0" divisor="1" bias="0" edgeMode="duplicate"/>
                     </filter>
                 </defs>
             `;
@@ -563,8 +563,14 @@
         }
         if (isVivid) {
             // GeForce NOW Digital Vibrance Profile:
-            // Elevates flat 8-bit SDR stream with rich console/PC color saturation and deep dynamic contrast
-            filters.push('contrast(1.09) saturate(1.18) brightness(1.02)');
+            // Elevates flat 8-bit SDR stream with rich console/PC color saturation and deep dynamic contrast.
+            // When Clarity Boost (visual sharpening) is active, edge contrast is already naturally heightened;
+            // use a luminance-preserving profile to keep darks/shadows crystal clear and vibrant without shadow crushing.
+            if (isClarity) {
+                filters.push('contrast(1.04) saturate(1.18) brightness(1.03)');
+            } else {
+                filters.push('contrast(1.09) saturate(1.18) brightness(1.02)');
+            }
         }
 
         if (filters.length > 0) {
