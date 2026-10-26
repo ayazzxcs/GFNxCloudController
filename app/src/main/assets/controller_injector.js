@@ -27,8 +27,18 @@
 
     const rawButtons = new Float32Array(17);
     const rawAxes = new Float32Array(4);
-    const unpolledButtonPress = new Uint8Array(17);
+    const lastPolledButtons = new Float32Array(17);
+    const lastPolledAxes = new Float32Array(4);
+    const buttonHoldUntil = new Float64Array(17);
+    const MIN_PRESS_HOLD_MS = 32;
+
     let lastTimestamp = performance.now();
+    let lastGetGamepadsPollTime = 0;
+    let lastConnectedDispatchTime = 0;
+    let hasDispatchedForCurrentStream = false;
+    let wasAnyNonZero = false;
+    let releaseConfirmFramesRemaining = 0;
+    let lastReleaseConfirmTime = 0;
 
     function nextMonotonicTimestamp() {
         const now = performance.now();
@@ -67,35 +77,56 @@
 
     function createButtonSnapshot(val) {
         const numVal = Number(val) || 0.0;
-        return {
+        const btn = {
             pressed: numVal > 0.1,
             touched: numVal > 0.0,
             value: numVal
         };
+        if (window.GamepadButton && window.GamepadButton.prototype) {
+            try { Object.setPrototypeOf(btn, window.GamepadButton.prototype); } catch (e) {}
+        }
+        return btn;
     }
 
     const GAMEPAD_ID = "Xbox 360 Controller (XInput STANDARD GAMEPAD)";
 
-    const virtualGamepad = {
-        id: GAMEPAD_ID,
-        index: 0,
-        connected: true,
-        timestamp: lastTimestamp,
-        mapping: "standard",
-        axes: [0.0, 0.0, 0.0, 0.0],
-        buttons: Array.from({ length: 17 }, () => createButtonSnapshot(0.0)),
-        vibrationActuator: vibrationActuator,
-        hapticActuators: []
-    };
+    function createRawGamepadObject(ts, axesArr, buttonsArr) {
+        const pad = {
+            id: GAMEPAD_ID,
+            index: 0,
+            connected: true,
+            timestamp: ts,
+            mapping: "standard",
+            axes: axesArr,
+            buttons: buttonsArr,
+            vibrationActuator: vibrationActuator,
+            hapticActuators: []
+        };
+        if (window.Gamepad && window.Gamepad.prototype) {
+            try { Object.setPrototypeOf(pad, window.Gamepad.prototype); } catch (e) {}
+        }
+        return pad;
+    }
+
+    const neutralGamepad = createRawGamepadObject(
+        lastTimestamp,
+        [0.0, 0.0, 0.0, 0.0],
+        Array.from({ length: 17 }, () => createButtonSnapshot(0.0))
+    );
+
+    const virtualGamepad = createRawGamepadObject(
+        lastTimestamp,
+        [0.0, 0.0, 0.0, 0.0],
+        Array.from({ length: 17 }, () => createButtonSnapshot(0.0))
+    );
     window.__virtualGamepad = virtualGamepad;
 
-    // Allow `snapshot instanceof Gamepad` checks to succeed safely without prototype pollution
     try {
         if (window.Gamepad && typeof Symbol !== 'undefined' && Symbol.hasInstance) {
             const origHasInstance = Function.prototype[Symbol.hasInstance];
             Object.defineProperty(window.Gamepad, Symbol.hasInstance, {
                 value: function(instance) {
-                    if (instance && (instance === virtualGamepad || instance.id === GAMEPAD_ID)) return true;
+                    if (instance && (instance === virtualGamepad || instance === neutralGamepad || instance.id === GAMEPAD_ID)) return true;
                     return origHasInstance ? origHasInstance.call(this, instance) : false;
                 },
                 configurable: true
@@ -122,82 +153,112 @@
         }
     }
 
-    // Ring of recent snapshots so:
-    // 1. Poll N+1 NEVER mutates Poll N's snapshot in-place before xCloud's poller compares
-    //    `this.previousGamepad` (Poll N) with `currentGamepad` (Poll N+1) to detect 1 -> 0 releases.
-    // 2. Poll N+2 zeroes out Poll N's retired snapshot in-place once Poll N+1 has become the new
-    //    `previousGamepad`, so any consumer holding an older object reference also sees 0.
-    let prevSnapshot = null;
-    let currentSnapshot = null;
+    let currentSnapshot = createRawGamepadObject(
+        lastTimestamp,
+        [0.0, 0.0, 0.0, 0.0],
+        Array.from({ length: 17 }, () => createButtonSnapshot(0.0))
+    );
 
-    function buildGamepadSnapshot(useUnpolledLatches) {
-        const ts = nextMonotonicTimestamp();
-        const buttonsSnap = new Array(17);
+    // Build or reuse gamepad snapshot during navigator.getGamepads():
+    // 1. Only builds a new snapshot object when the effective state (buttons/axes) changes
+    //    or during the 3 post-release confirmation frames, so multiple callers in the same
+    //    frame always receive the exact same snapshot reference.
+    // 2. Retiring snapshots are kept intact for 120ms so xCloud's diff poller (`prevPad` vs `currPad`)
+    //    always detects the 1 -> 0 release transition before the retired object is zeroed in-place.
+    function buildGamepadSnapshot() {
+        const now = performance.now();
+        let stateChanged = false;
         let anyNonZero = false;
+        const effButtons = new Float32Array(17);
 
         for (let i = 0; i < 17; i++) {
             let numVal = Number(rawButtons[i]) || 0.0;
-            if (useUnpolledLatches && unpolledButtonPress[i] === 1) {
-                if (numVal <= 0.1) {
-                    numVal = 1.0;
-                }
-                unpolledButtonPress[i] = 0;
+            if (numVal <= 0.1 && now < buttonHoldUntil[i]) {
+                numVal = 1.0;
             }
-            if (numVal > 0.05) anyNonZero = true;
-            buttonsSnap[i] = createButtonSnapshot(numVal);
+            effButtons[i] = numVal;
+            if (numVal > 0.05) {
+                anyNonZero = true;
+            }
+            if (Math.abs(numVal - lastPolledButtons[i]) > 0.001) {
+                stateChanged = true;
+            }
         }
 
-        const ax0 = Number(rawAxes[0]) || 0.0;
-        const ax1 = Number(rawAxes[1]) || 0.0;
-        const ax2 = Number(rawAxes[2]) || 0.0;
-        const ax3 = Number(rawAxes[3]) || 0.0;
+        const ax0 = Math.abs(rawAxes[0]) > 0.005 ? Number(rawAxes[0]) : 0.0;
+        const ax1 = Math.abs(rawAxes[1]) > 0.005 ? Number(rawAxes[1]) : 0.0;
+        const ax2 = Math.abs(rawAxes[2]) > 0.005 ? Number(rawAxes[2]) : 0.0;
+        const ax3 = Math.abs(rawAxes[3]) > 0.005 ? Number(rawAxes[3]) : 0.0;
+
         if (Math.abs(ax0) > 0.01 || Math.abs(ax1) > 0.01 || Math.abs(ax2) > 0.01 || Math.abs(ax3) > 0.01) {
             anyNonZero = true;
         }
-        const axesSnap = [ax0, ax1, ax2, ax3];
 
-        // If the controller is now completely neutral (0) and the previous snapshot was ALSO neutral,
-        // or before retiring `prevSnapshot`, zero out the 2-frames-ago snapshot `prevSnapshot` and `virtualGamepad`.
-        if (prevSnapshot && prevSnapshot !== currentSnapshot) {
-            zeroGamepadObjectInPlace(prevSnapshot);
+        if (
+            Math.abs(ax0 - lastPolledAxes[0]) > 0.001 ||
+            Math.abs(ax1 - lastPolledAxes[1]) > 0.001 ||
+            Math.abs(ax2 - lastPolledAxes[2]) > 0.001 ||
+            Math.abs(ax3 - lastPolledAxes[3]) > 0.001
+        ) {
+            stateChanged = true;
         }
-        if (!anyNonZero && currentSnapshot) {
-            // Check if currentSnapshot was already all-zero; if so, also keep virtualGamepad zeroed
-            zeroGamepadObjectInPlace(virtualGamepad);
+
+        if (wasAnyNonZero && !anyNonZero) {
+            releaseConfirmFramesRemaining = 3;
+            lastReleaseConfirmTime = now;
+            stateChanged = true;
+        } else if (!anyNonZero && releaseConfirmFramesRemaining > 0 && (now - lastReleaseConfirmTime >= 24)) {
+            releaseConfirmFramesRemaining--;
+            lastReleaseConfirmTime = now;
+            stateChanged = true;
         } else if (anyNonZero) {
-            for (let i = 0; i < 17; i++) {
-                const b = buttonsSnap[i];
-                const vb = virtualGamepad.buttons[i];
-                vb.pressed = b.pressed;
-                vb.touched = b.touched;
-                vb.value = b.value;
-            }
-            virtualGamepad.axes[0] = ax0;
-            virtualGamepad.axes[1] = ax1;
-            virtualGamepad.axes[2] = ax2;
-            virtualGamepad.axes[3] = ax3;
+            releaseConfirmFramesRemaining = 0;
         }
+        wasAnyNonZero = anyNonZero;
+
+        if (!stateChanged && currentSnapshot) {
+            return currentSnapshot;
+        }
+
+        const ts = nextMonotonicTimestamp();
+        const buttonsSnap = new Array(17);
+        for (let i = 0; i < 17; i++) {
+            lastPolledButtons[i] = effButtons[i];
+            buttonsSnap[i] = createButtonSnapshot(effButtons[i]);
+            const vb = virtualGamepad.buttons[i];
+            vb.pressed = buttonsSnap[i].pressed;
+            vb.touched = buttonsSnap[i].touched;
+            vb.value = buttonsSnap[i].value;
+        }
+
+        lastPolledAxes[0] = ax0;
+        lastPolledAxes[1] = ax1;
+        lastPolledAxes[2] = ax2;
+        lastPolledAxes[3] = ax3;
+        virtualGamepad.axes[0] = ax0;
+        virtualGamepad.axes[1] = ax1;
+        virtualGamepad.axes[2] = ax2;
+        virtualGamepad.axes[3] = ax3;
         virtualGamepad.timestamp = ts;
 
-        const snapshot = {
-            id: GAMEPAD_ID,
-            index: 0,
-            connected: true,
-            timestamp: ts,
-            mapping: "standard",
-            axes: axesSnap,
-            buttons: buttonsSnap,
-            vibrationActuator: vibrationActuator,
-            hapticActuators: []
-        };
-
-        prevSnapshot = currentSnapshot;
+        const retiringSnapshot = currentSnapshot;
+        const snapshot = createRawGamepadObject(ts, [ax0, ax1, ax2, ax3], buttonsSnap);
         currentSnapshot = snapshot;
         window.__virtualGamepad = snapshot;
+
+        // Zero out the retiring snapshot 120ms later (after ~7 animation frames),
+        // ensuring xCloud's current frame diff (`previousGamepad` vs `currentGamepad`)
+        // sees the unmutated transition first, and any stale object reference is then zeroed.
+        if (retiringSnapshot && retiringSnapshot !== snapshot) {
+            setTimeout(function() {
+                if (retiringSnapshot !== currentSnapshot) {
+                    zeroGamepadObjectInPlace(retiringSnapshot);
+                }
+            }, 120);
+        }
+
         return snapshot;
     }
-
-    currentSnapshot = buildGamepadSnapshot(false);
 
     // Override navigator.vibrate so any web/game stream calls respect the vibration setting
     const _origVibrate = navigator.vibrate ? navigator.vibrate.bind(navigator) : null;
@@ -223,25 +284,26 @@
         return ev;
     }
 
-    // Ensure each registered 'gamepadconnected' listener in xCloud is invoked AT MOST ONCE
-    // so xCloud never spawns duplicate polling loops or duplicate controller entries for index 0.
-    const notifiedListeners = typeof WeakSet !== 'undefined' ? new WeakSet() : null;
-    let hasFiredConnected = false;
-
-    function dispatchGamepadConnected() {
-        if (!hasFiredConnected) {
-            hasFiredConnected = true;
-            const ev = createGamepadEvent("gamepadconnected", currentSnapshot || virtualGamepad);
-            try {
-                window.dispatchEvent(ev);
-            } catch (e) {}
-            try {
-                if (typeof window.ongamepadconnected === 'function') {
-                    window.ongamepadconnected(ev);
-                }
-            } catch (e) {}
-            console.log("[GFNxCloud] gamepadconnected event dispatched");
+    function dispatchGamepadConnected(force) {
+        const now = performance.now();
+        if (!force && (now - lastConnectedDispatchTime < 1500)) {
+            return;
         }
+        lastConnectedDispatchTime = now;
+        // Always pass a clean zeroed neutralGamepad in the connection event so xCloud never
+        // caches a pressed button as the baseline controller state on connection.
+        zeroGamepadObjectInPlace(neutralGamepad);
+        neutralGamepad.timestamp = nextMonotonicTimestamp();
+        const ev = createGamepadEvent("gamepadconnected", neutralGamepad);
+        try {
+            window.dispatchEvent(ev);
+        } catch (e) {}
+        try {
+            if (typeof window.ongamepadconnected === 'function') {
+                window.ongamepadconnected(ev);
+            }
+        } catch (e) {}
+        console.log("[GFNxCloud] gamepadconnected event dispatched");
     }
 
     window.__dispatchGamepadConnected = dispatchGamepadConnected;
@@ -291,29 +353,22 @@
             if (type === "blur" || type === "visibilitychange" || type === "webkitvisibilitychange" || type === "gamepaddisconnected") {
                 return;
             }
+            const res = origWindowAddEventListener(type, listener, options);
             if (type === "gamepadconnected" && listener) {
-                const isObjOrFn = typeof listener === "function" || typeof listener === "object";
-                const wrappedListener = function(ev) {
-                    if (notifiedListeners && isObjOrFn) {
-                        if (notifiedListeners.has(listener)) return;
-                        notifiedListeners.add(listener);
-                    }
-                    if (typeof listener === "function") {
-                        return listener.call(this, ev);
-                    } else if (listener && typeof listener.handleEvent === "function") {
-                        return listener.handleEvent(ev);
-                    }
-                };
-                const res = origWindowAddEventListener(type, wrappedListener, options);
                 setTimeout(() => {
                     try {
-                        const ev = createGamepadEvent("gamepadconnected", currentSnapshot || virtualGamepad);
-                        wrappedListener.call(window, ev);
+                        zeroGamepadObjectInPlace(neutralGamepad);
+                        neutralGamepad.timestamp = nextMonotonicTimestamp();
+                        const ev = createGamepadEvent("gamepadconnected", neutralGamepad);
+                        if (typeof listener === "function") {
+                            listener.call(window, ev);
+                        } else if (typeof listener.handleEvent === "function") {
+                            listener.handleEvent(ev);
+                        }
                     } catch (e) {}
                 }, 15);
-                return res;
             }
-            return origWindowAddEventListener(type, listener, options);
+            return res;
         };
     }
 
@@ -328,7 +383,21 @@
     }
 
     function ensureStreamActiveFocus() {
-        // Lightweight no-op placeholder preserved for compatibility; document.hasFocus() is already locked to true
+        try {
+            if (typeof window.focus === 'function') {
+                window.focus();
+            }
+            const streamEl = document.querySelector('video') ||
+                             document.querySelector('[data-testid="media-container"]') ||
+                             document.querySelector('#game-stream') ||
+                             document.body;
+            if (streamEl && typeof streamEl.focus === 'function' && document.activeElement !== streamEl) {
+                if (!streamEl.hasAttribute('tabindex')) {
+                    streamEl.setAttribute('tabindex', '-1');
+                }
+                streamEl.focus({ preventScroll: true });
+            }
+        } catch (e) {}
     }
 
     const ZERO_STATE_JSON = '{"b":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"a":[0,0,0,0]}';
@@ -342,7 +411,7 @@
         }
     }
 
-    // Read latest state from AndroidBridge into rawButtons and rawAxes (without mutating prevSnapshot in-place!)
+    // Read latest state from AndroidBridge into rawButtons and rawAxes (without mutating currentSnapshot in-place!)
     function pollFromAndroid() {
         if (window.AndroidBridge && typeof window.AndroidBridge.getGamepadState === 'function') {
             try {
@@ -350,12 +419,13 @@
                 if (!raw || raw === ZERO_STATE_JSON) {
                     resetVirtualGamepadToZero();
                 } else {
+                    const now = performance.now();
                     const state = JSON.parse(raw);
                     if (state.b) {
                         for (let i = 0; i < 17; i++) {
                             const numVal = Number(state.b[i]) || 0.0;
                             if (numVal > 0.1 && rawButtons[i] <= 0.1) {
-                                unpolledButtonPress[i] = 1;
+                                buttonHoldUntil[i] = now + MIN_PRESS_HOLD_MS;
                             }
                             rawButtons[i] = numVal;
                         }
@@ -381,13 +451,20 @@
     }
 
     // Direct fast-path called from Kotlin evaluateJavascript when state changes.
-    // IMPORTANT: Only updates rawButtons/rawAxes (and unpolledButtonPress latches) — NEVER mutates
-    // `currentSnapshot` in-place outside of `navigator.getGamepads()`, so xCloud's polling loop
-    // never loses the `prevSnapshot` vs `nextSnapshot` transition edge!
+    // Updates rawButtons/rawAxes without mutating currentSnapshot in-place outside navigator.getGamepads().
     window.onControllerInput = function(buttons, axes) {
+        ensureStreamActiveFocus();
+
+        const now = performance.now();
+        // If xCloud's stream poller hasn't called navigator.getGamepads() recently (or hasn't connected since
+        // the stream started), fire gamepadconnected with neutralGamepad first so xCloud starts polling at 60Hz!
+        if (!hasDispatchedForCurrentStream || (now - lastGetGamepadsPollTime > 400)) {
+            hasDispatchedForCurrentStream = true;
+            dispatchGamepadConnected(true);
+        }
+
         if (window.AndroidBridge && typeof window.AndroidBridge.getGamepadState === 'function') {
             pollFromAndroid();
-            dispatchGamepadConnected();
             return;
         }
 
@@ -395,7 +472,7 @@
             for (let i = 0; i < 17; i++) {
                 const numVal = Number(buttons[i]) || 0.0;
                 if (numVal > 0.1 && rawButtons[i] <= 0.1) {
-                    unpolledButtonPress[i] = 1;
+                    buttonHoldUntil[i] = now + MIN_PRESS_HOLD_MS;
                 }
                 rawButtons[i] = numVal;
             }
@@ -405,14 +482,13 @@
                 rawAxes[i] = Number(axes[i]) || 0.0;
             }
         }
-        dispatchGamepadConnected();
     };
 
     // Override navigator.getGamepads to return ONLY the standard 4-port XInput array [snapshot, null, null, null].
     function virtualGetGamepads() {
+        lastGetGamepadsPollTime = performance.now();
         pollFromAndroid();
-        const snap = buildGamepadSnapshot(true);
-        dispatchGamepadConnected();
+        const snap = buildGamepadSnapshot();
         return [snap, null, null, null];
     }
 
@@ -444,8 +520,8 @@
         });
     } catch (e) {}
 
-    window.addEventListener('DOMContentLoaded', () => setTimeout(() => dispatchGamepadConnected(), 300));
-    window.addEventListener('load', () => setTimeout(() => dispatchGamepadConnected(), 600));
+    window.addEventListener('DOMContentLoaded', () => setTimeout(() => dispatchGamepadConnected(true), 300));
+    window.addEventListener('load', () => setTimeout(() => dispatchGamepadConnected(true), 600));
 
     // Hook History API pushState / replaceState for SPA route transitions
     try {
@@ -453,7 +529,9 @@
         if (origPushState) {
             history.pushState = function(...args) {
                 const res = origPushState.apply(this, args);
-                setTimeout(() => dispatchGamepadConnected(), 300);
+                hasDispatchedForCurrentStream = false;
+                setTimeout(() => dispatchGamepadConnected(true), 300);
+                setTimeout(() => dispatchGamepadConnected(true), 1200);
                 return res;
             };
         }
@@ -461,7 +539,9 @@
         if (origReplaceState) {
             history.replaceState = function(...args) {
                 const res = origReplaceState.apply(this, args);
-                setTimeout(() => dispatchGamepadConnected(), 300);
+                hasDispatchedForCurrentStream = false;
+                setTimeout(() => dispatchGamepadConnected(true), 300);
+                setTimeout(() => dispatchGamepadConnected(true), 1200);
                 return res;
             };
         }
@@ -948,11 +1028,17 @@
 
                 applyVisualEnhancementsToVideo(v);
                 ensureStreamActiveFocus();
-                dispatchGamepadConnected(false);
+                hasDispatchedForCurrentStream = false;
+                dispatchGamepadConnected(true);
+
+                v.addEventListener('loadeddata', () => {
+                    ensureStreamActiveFocus();
+                    dispatchGamepadConnected(true);
+                });
 
                 v.addEventListener('playing', () => {
                     ensureStreamActiveFocus();
-                    dispatchGamepadConnected(false);
+                    dispatchGamepadConnected(true);
                 });
 
                 // Calculate real decoded stream FPS only when FPS counter is wanted
