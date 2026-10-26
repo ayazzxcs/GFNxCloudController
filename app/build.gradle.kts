@@ -146,3 +146,14 @@ dependencies {
   "ksp"(libs.androidx.room.compiler)
   "ksp"(libs.moshi.kotlin.codegen)
 }
+
+val copyDebugApk by tasks.registering(Copy::class) {
+  from(layout.buildDirectory.file("outputs/apk/debug/app-debug.apk"))
+  into(rootProject.layout.projectDirectory.dir("apk"))
+  rename("app-debug.apk", "GFNxCloudController-debug.apk")
+}
+
+tasks.matching { it.name == "assembleDebug" }.configureEach {
+  finalizedBy(copyDebugApk)
+}
+
