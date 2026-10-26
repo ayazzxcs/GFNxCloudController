@@ -176,10 +176,15 @@ class MainActivity : ComponentActivity() {
         // Bridge state changes to WebView via evaluateJavascript (Fast Zero-Allocation IPC Path)
         stateManager.onStateChanged = { snapshot ->
             runOnUiThread {
-                webViewInstance?.evaluateJavascript(
-                    "window.onControllerInput && window.onControllerInput(${snapshot.fastJsArgs});",
-                    null
-                )
+                webViewInstance?.let { wv ->
+                    if (!wv.hasFocus()) {
+                        wv.requestFocus()
+                    }
+                    wv.evaluateJavascript(
+                        "window.onControllerInput && window.onControllerInput(${snapshot.fastJsArgs});",
+                        null
+                    )
+                }
             }
         }
 
@@ -231,6 +236,9 @@ class MainActivity : ComponentActivity() {
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
             setBackgroundColor(android.graphics.Color.BLACK)
+            isFocusable = true
+            isFocusableInTouchMode = true
+            requestFocus()
 
             settings.apply {
                 javaScriptEnabled = true
@@ -311,6 +319,9 @@ class MainActivity : ComponentActivity() {
                 override fun onProgressChanged(view: WebView?, newProgress: Int) {
                     super.onProgressChanged(view, newProgress)
                     _loadingProgress.value = newProgress
+                    if (newProgress >= 20 && !isAuthUrl(view?.url)) {
+                        injectController(view)
+                    }
                 }
             }
 
@@ -342,6 +353,16 @@ class MainActivity : ComponentActivity() {
                     super.onPageStarted(view, url, favicon)
                     _loadingProgress.value = 10
                     CookieManager.getInstance().flush()
+                    if (!isAuthUrl(url)) {
+                        injectController(view)
+                    }
+                }
+
+                override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
+                    super.doUpdateVisitedHistory(view, url, isReload)
+                    if (!isAuthUrl(url)) {
+                        injectController(view)
+                    }
                 }
 
                 override fun onPageFinished(view: WebView?, url: String?) {

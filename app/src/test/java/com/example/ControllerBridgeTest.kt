@@ -249,5 +249,10 @@ class ControllerBridgeTest {
         assertTrue(script.contains("window.setGfnReflex"))
         assertTrue(script.contains("playoutDelayHint"))
         assertTrue(script.contains("jitterBufferTarget"))
+        assertTrue(script.contains("buildGamepadSnapshot"))
+        assertTrue(script.contains("createButtonSnapshot"))
+        assertTrue(script.contains("document.hasFocus"))
+        assertTrue(script.contains("ensureStreamActiveFocus"))
+        assertTrue(script.contains("history.pushState"))
     }
 }
