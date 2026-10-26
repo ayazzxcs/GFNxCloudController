@@ -125,7 +125,7 @@ fun SettingsDialog(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "v1.4",
+                            text = "v1.5",
                             color = Color(0xFF10B981),
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold

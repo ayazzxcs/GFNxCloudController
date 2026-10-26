@@ -29,9 +29,23 @@
     const rawAxes = new Float32Array(4);
     const lastPolledButtons = new Float32Array(17);
     const lastPolledAxes = new Float32Array(4);
-    const buttonHoldUntil = new Float64Array(17);
-    const polledWhilePressed = new Uint8Array(17);
-    const MIN_PRESS_HOLD_MS = 16;
+
+    // Per-button pulse state for guaranteed 1-tap registration & anti-turbo-scroll pulse capping
+    const buttonPendingPress = new Uint8Array(17);
+    const buttonPressStartTime = new Float64Array(17);
+    const buttonPolledCount = new Uint16Array(17);
+
+    const DPAD_PULSE_MS = 85;
+    const DPAD_REPEAT_INTERVAL_MS = 550;
+    const ACTION_MIN_HOLD_MS = 75;
+
+    // Left stick menu step pulse & anti-turbo-scroll window (0..85ms active, 85..320ms zero pause, >320ms continuous)
+    let prevRawLeftStickMag = 0.0;
+    let leftStickPulseActive = 0;
+    let leftStickStartTime = 0;
+    let leftStickPolledCount = 0;
+    let leftStickLatchedX = 0.0;
+    let leftStickLatchedY = 0.0;
 
     let lastTimestamp = performance.now();
     let lastGetGamepadsPollTime = 0;
@@ -42,7 +56,6 @@
     let wasAnyNonZero = false;
     let releaseConfirmFramesRemaining = 0;
     let lastReleaseConfirmTime = 0;
-    const activeNonZeroSnapshots = [];
 
     function nextMonotonicTimestamp() {
         const now = performance.now();
@@ -112,19 +125,19 @@
         return pad;
     }
 
-    const virtualGamepad = createRawGamepadObject(
+    let currentSnapshot = createRawGamepadObject(
         lastTimestamp,
         [0.0, 0.0, 0.0, 0.0],
         Array.from({ length: 17 }, () => createButtonSnapshot(0.0))
     );
-    window.__virtualGamepad = virtualGamepad;
+    window.__virtualGamepad = currentSnapshot;
 
     try {
         if (window.Gamepad && typeof Symbol !== 'undefined' && Symbol.hasInstance) {
             const origHasInstance = Function.prototype[Symbol.hasInstance];
             Object.defineProperty(window.Gamepad, Symbol.hasInstance, {
                 value: function(instance) {
-                    if (instance && (instance === virtualGamepad || instance.id === GAMEPAD_ID)) return true;
+                    if (instance && (instance === currentSnapshot || instance.id === GAMEPAD_ID)) return true;
                     return origHasInstance ? origHasInstance.call(this, instance) : false;
                 },
                 configurable: true
@@ -132,44 +145,9 @@
         }
     } catch (e) {}
 
-    function zeroGamepadObjectInPlace(pad) {
-        if (!pad) return;
-        if (pad.buttons) {
-            for (let i = 0; i < pad.buttons.length; i++) {
-                const b = pad.buttons[i];
-                if (b) {
-                    b.pressed = false;
-                    b.touched = false;
-                    b.value = 0.0;
-                }
-            }
-        }
-        if (pad.axes) {
-            for (let i = 0; i < pad.axes.length; i++) {
-                pad.axes[i] = 0.0;
-            }
-        }
-    }
-
-    let currentSnapshot = createRawGamepadObject(
-        lastTimestamp,
-        [0.0, 0.0, 0.0, 0.0],
-        Array.from({ length: 17 }, () => createButtonSnapshot(0.0))
-    );
-
-    function flushRetiredSnapshots() {
-        for (let i = activeNonZeroSnapshots.length - 1; i >= 0; i--) {
-            const oldSnap = activeNonZeroSnapshots[i];
-            if (oldSnap !== currentSnapshot) {
-                zeroGamepadObjectInPlace(oldSnap);
-                activeNonZeroSnapshots.splice(i, 1);
-            }
-        }
-    }
-
     function hasDirectionalInputActive() {
         for (let i = 12; i <= 15; i++) {
-            if (lastPolledButtons[i] > 0.05 || rawButtons[i] > 0.05) return true;
+            if (lastPolledButtons[i] > 0.05 || rawButtons[i] > 0.05 || buttonPendingPress[i] === 1) return true;
         }
         for (let i = 0; i < 4; i++) {
             if (Math.abs(lastPolledAxes[i]) > 0.01 || Math.abs(rawAxes[i]) > 0.01) return true;
@@ -177,29 +155,68 @@
         return false;
     }
 
-    // Build or reuse gamepad snapshot:
-    // 1. Only builds a new snapshot object when the effective state (buttons/axes) changes
-    //    or during post-release confirmation frames, so multiple callers in the same
-    //    frame always receive the exact same snapshot reference.
-    // 2. Once a pressed button has been polled at least once by navigator.getGamepads()
-    //    (polledWhilePressed[i] === 1), releasing the finger clears buttonHoldUntil[i] immediately (0ms).
-    // 3. Retiring non-zero snapshots are kept intact during the synchronous getGamepads() diff call
-    //    and then zeroed in-place immediately on the next tick (0-16ms).
-    function buildGamepadSnapshot() {
+    // Build or reuse IMMUTABLE gamepad snapshot:
+    // 1. Snapshots are NEVER mutated in-place after creation, so xCloud's `prevPad !== currPad`
+    //    diff detector always sees the exact 0 -> 1 press edge and 1 -> 0 release edge.
+    // 2. D-Pad buttons (12..15) emit a crisp 85ms pulse (guaranteed >= 3 getGamepads() polls)
+    //    and then automatically return to 0.0 even if held, preventing the game's 200ms
+    //    turbo auto-scroll from ever triggering while ensuring 1-tap always moves 1 option.
+    function buildGamepadSnapshot(isFromGetGamepadsPoll) {
         const now = performance.now();
         let stateChanged = false;
         let anyNonZero = false;
         const effButtons = new Float32Array(17);
 
         for (let i = 0; i < 17; i++) {
-            let numVal = Number(rawButtons[i]) || 0.0;
-            if (numVal <= 0.1) {
-                if (polledWhilePressed[i] === 1) {
-                    buttonHoldUntil[i] = 0;
-                } else if (now < buttonHoldUntil[i]) {
+            const rawVal = Number(rawButtons[i]) || 0.0;
+            const elapsed = now - buttonPressStartTime[i];
+            let numVal = 0.0;
+
+            if (i >= 12 && i <= 15) {
+                // D-Pad (Up, Down, Left, Right):
+                // Fixed 85ms single-step pulse (at least 3 polls), then forced 0.0 pause until 550ms
+                if (buttonPendingPress[i] === 1) {
+                    if (elapsed < DPAD_PULSE_MS || (buttonPolledCount[i] < 3 && elapsed < 150)) {
+                        numVal = 1.0;
+                        if (isFromGetGamepadsPoll) {
+                            buttonPolledCount[i]++;
+                        }
+                    } else {
+                        buttonPendingPress[i] = 0;
+                        numVal = 0.0;
+                    }
+                } else if (rawVal > 0.1 && elapsed >= DPAD_REPEAT_INTERVAL_MS) {
+                    // Slow discrete step if user intentionally holds D-Pad for > 550ms
+                    buttonPendingPress[i] = 1;
+                    buttonPressStartTime[i] = now;
+                    buttonPolledCount[i] = isFromGetGamepadsPoll ? 1 : 0;
                     numVal = 1.0;
+                } else {
+                    numVal = 0.0;
+                }
+            } else {
+                // Action & Shoulder Buttons (0..11, 16):
+                // Hold for at least 75ms (and >= 3 polls) on quick tap, or continuously while held
+                if (rawVal > 0.1) {
+                    numVal = rawVal;
+                    if (isFromGetGamepadsPoll) {
+                        buttonPolledCount[i]++;
+                    }
+                } else if (buttonPendingPress[i] === 1) {
+                    if (elapsed < ACTION_MIN_HOLD_MS || (buttonPolledCount[i] < 3 && elapsed < 150)) {
+                        numVal = 1.0;
+                        if (isFromGetGamepadsPoll) {
+                            buttonPolledCount[i]++;
+                        }
+                    } else {
+                        buttonPendingPress[i] = 0;
+                        numVal = 0.0;
+                    }
+                } else {
+                    numVal = 0.0;
                 }
             }
+
             effButtons[i] = numVal;
             if (numVal > 0.05) {
                 anyNonZero = true;
@@ -209,8 +226,42 @@
             }
         }
 
-        const ax0 = Math.abs(rawAxes[0]) > 0.01 ? Number(rawAxes[0]) : 0.0;
-        const ax1 = Math.abs(rawAxes[1]) > 0.01 ? Number(rawAxes[1]) : 0.0;
+        // Left Stick (axes[0], axes[1]):
+        // 0..85ms (and >= 3 polls): output deflection so a quick flick always moves 1 menu item
+        // 85..320ms: output 0.0 pause window so holding ~250ms while watching cloud video stream never triggers 1-round turbo scroll
+        // >320ms: continuous analog movement for 3D walking/running
+        const rawMag = Math.hypot(rawAxes[0], rawAxes[1]);
+        let ax0 = 0.0;
+        let ax1 = 0.0;
+        if (leftStickPulseActive === 1) {
+            const stickElapsed = now - leftStickStartTime;
+            if (stickElapsed < DPAD_PULSE_MS || (leftStickPolledCount < 3 && stickElapsed < 150)) {
+                ax0 = rawMag > 0.22 ? Number(rawAxes[0]) : leftStickLatchedX;
+                ax1 = rawMag > 0.22 ? Number(rawAxes[1]) : leftStickLatchedY;
+                if (isFromGetGamepadsPoll) {
+                    leftStickPolledCount++;
+                }
+            } else if (stickElapsed < 320) {
+                ax0 = 0.0;
+                ax1 = 0.0;
+                if (rawMag <= 0.15) {
+                    leftStickPulseActive = 0;
+                }
+            } else {
+                if (rawMag > 0.01) {
+                    ax0 = Number(rawAxes[0]);
+                    ax1 = Number(rawAxes[1]);
+                } else {
+                    leftStickPulseActive = 0;
+                    ax0 = 0.0;
+                    ax1 = 0.0;
+                }
+            }
+        } else if (rawMag > 0.01) {
+            ax0 = Number(rawAxes[0]);
+            ax1 = Number(rawAxes[1]);
+        }
+
         const ax2 = Math.abs(rawAxes[2]) > 0.01 ? Number(rawAxes[2]) : 0.0;
         const ax3 = Math.abs(rawAxes[3]) > 0.01 ? Number(rawAxes[3]) : 0.0;
 
@@ -241,7 +292,7 @@
         }
         wasAnyNonZero = anyNonZero;
 
-        if (!stateChanged && currentSnapshot) {
+        if (!stateChanged && !anyNonZero && releaseConfirmFramesRemaining <= 0 && currentSnapshot) {
             return currentSnapshot;
         }
 
@@ -250,33 +301,16 @@
         for (let i = 0; i < 17; i++) {
             lastPolledButtons[i] = effButtons[i];
             buttonsSnap[i] = createButtonSnapshot(effButtons[i]);
-            const vb = virtualGamepad.buttons[i];
-            vb.pressed = buttonsSnap[i].pressed;
-            vb.touched = buttonsSnap[i].touched;
-            vb.value = buttonsSnap[i].value;
         }
 
         lastPolledAxes[0] = ax0;
         lastPolledAxes[1] = ax1;
         lastPolledAxes[2] = ax2;
         lastPolledAxes[3] = ax3;
-        virtualGamepad.axes[0] = ax0;
-        virtualGamepad.axes[1] = ax1;
-        virtualGamepad.axes[2] = ax2;
-        virtualGamepad.axes[3] = ax3;
-        virtualGamepad.timestamp = ts;
 
         const snapshot = createRawGamepadObject(ts, [ax0, ax1, ax2, ax3], buttonsSnap);
         currentSnapshot = snapshot;
         window.__virtualGamepad = snapshot;
-
-        if (anyNonZero) {
-            activeNonZeroSnapshots.push(snapshot);
-        }
-
-        if (activeNonZeroSnapshots.length > 0) {
-            setTimeout(flushRetiredSnapshots, 16);
-        }
 
         return snapshot;
     }
@@ -306,8 +340,6 @@
     }
 
     function dispatchGamepadConnected(force) {
-        // Never dispatch gamepadconnected while directional inputs (D-Pad or Sticks) are non-zero,
-        // as xCloud on Samsung Chromium caches ev.gamepad as the baseline state until the next event.
         if (hasDirectionalInputActive()) {
             return;
         }
@@ -316,7 +348,7 @@
             return;
         }
         lastConnectedDispatchTime = now;
-        const ev = createGamepadEvent("gamepadconnected", currentSnapshot || virtualGamepad);
+        const ev = createGamepadEvent("gamepadconnected", currentSnapshot);
         try {
             window.dispatchEvent(ev);
         } catch (e) {}
@@ -378,7 +410,7 @@
             if (type === "gamepadconnected" && listener) {
                 setTimeout(() => {
                     try {
-                        const ev = createGamepadEvent("gamepadconnected", currentSnapshot || virtualGamepad);
+                        const ev = createGamepadEvent("gamepadconnected", currentSnapshot);
                         if (typeof listener === "function") {
                             listener.call(window, ev);
                         } else if (typeof listener.handleEvent === "function") {
@@ -433,24 +465,55 @@
     function resetVirtualGamepadToZero() {
         for (let i = 0; i < 17; i++) {
             rawButtons[i] = 0.0;
-            buttonHoldUntil[i] = 0;
-            polledWhilePressed[i] = 0;
         }
         for (let i = 0; i < 4; i++) {
             rawAxes[i] = 0.0;
         }
+        prevRawLeftStickMag = 0.0;
     }
 
-    function scheduleHoldExpiryCheck(btnIdx) {
-        setTimeout(function() {
-            if (rawButtons[btnIdx] <= 0.1) {
-                buttonHoldUntil[btnIdx] = 0;
-                buildGamepadSnapshot();
-                if (!wasAnyNonZero) {
-                    dispatchGamepadConnected(true);
+    function updateRawStateFromArrays(buttonsArr, axesArr) {
+        const now = performance.now();
+        let wakeButtonJustPressed = false;
+
+        if (buttonsArr && buttonsArr.length >= 17) {
+            for (let i = 0; i < 17; i++) {
+                const numVal = Number(buttonsArr[i]) || 0.0;
+                const prevVal = rawButtons[i];
+                if (numVal > 0.1 && prevVal <= 0.1) {
+                    buttonPendingPress[i] = 1;
+                    buttonPressStartTime[i] = now;
+                    buttonPolledCount[i] = 0;
+                    if (i === 0 || i === 1 || i === 2 || i === 3 || i === 8 || i === 9 || i === 16) {
+                        wakeButtonJustPressed = true;
+                    }
                 }
+                rawButtons[i] = numVal;
             }
-        }, MIN_PRESS_HOLD_MS + 2);
+        }
+
+        if (axesArr && axesArr.length >= 4) {
+            const ax0 = Number(axesArr[0]) || 0.0;
+            const ax1 = Number(axesArr[1]) || 0.0;
+            const mag = Math.hypot(ax0, ax1);
+            if (mag > 0.22 && prevRawLeftStickMag <= 0.22) {
+                leftStickPulseActive = 1;
+                leftStickStartTime = now;
+                leftStickPolledCount = 0;
+                leftStickLatchedX = ax0;
+                leftStickLatchedY = ax1;
+            } else if (mag > 0.22) {
+                leftStickLatchedX = ax0;
+                leftStickLatchedY = ax1;
+            }
+            prevRawLeftStickMag = mag;
+
+            for (let i = 0; i < 4; i++) {
+                rawAxes[i] = Number(axesArr[i]) || 0.0;
+            }
+        }
+
+        return wakeButtonJustPressed;
     }
 
     // Read latest state from AndroidBridge into rawButtons and rawAxes
@@ -461,44 +524,17 @@
                 if (!raw || raw === ZERO_STATE_JSON) {
                     resetVirtualGamepadToZero();
                 } else {
-                    const now = performance.now();
                     const state = JSON.parse(raw);
-                    if (state.b) {
-                        for (let i = 0; i < 17; i++) {
-                            const numVal = Number(state.b[i]) || 0.0;
-                            if (numVal > 0.1 && rawButtons[i] <= 0.1) {
-                                polledWhilePressed[i] = 0;
-                                buttonHoldUntil[i] = now + MIN_PRESS_HOLD_MS;
-                                scheduleHoldExpiryCheck(i);
-                            } else if (numVal <= 0.1 && polledWhilePressed[i] === 1) {
-                                buttonHoldUntil[i] = 0;
-                            }
-                            rawButtons[i] = numVal;
-                        }
-                    } else {
-                        for (let i = 0; i < 17; i++) {
-                            rawButtons[i] = 0.0;
-                        }
-                    }
-                    if (state.a) {
-                        for (let i = 0; i < 4; i++) {
-                            rawAxes[i] = Number(state.a[i]) || 0.0;
-                        }
-                    } else {
-                        for (let i = 0; i < 4; i++) {
-                            rawAxes[i] = 0.0;
-                        }
-                    }
+                    updateRawStateFromArrays(
+                        state.b || [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+                        state.a || [0,0,0,0]
+                    );
                 }
-            } catch (e) {
-                resetVirtualGamepadToZero();
-            }
+            } catch (e) {}
         }
     }
 
     // Direct fast-path called from Kotlin evaluateJavascript when state changes.
-    // Uses the passed (buttons, axes) arrays directly to avoid synchronous JNI contention,
-    // and immediately dispatches force=true on release so menu scrolling stops in 0ms.
     window.onControllerInput = function(buttons, axes) {
         const now = performance.now();
         lastDirectInputTime = now;
@@ -508,54 +544,14 @@
         }
 
         let wakeButtonJustPressed = false;
-        let anyInputJustReleased = false;
-
         if (buttons && buttons.length >= 17) {
-            for (let i = 0; i < 17; i++) {
-                const numVal = Number(buttons[i]) || 0.0;
-                const prevVal = rawButtons[i];
-                if (numVal > 0.1 && prevVal <= 0.1) {
-                    polledWhilePressed[i] = 0;
-                    buttonHoldUntil[i] = now + MIN_PRESS_HOLD_MS;
-                    scheduleHoldExpiryCheck(i);
-                    if (i === 0 || i === 1 || i === 2 || i === 3 || i === 8 || i === 9 || i === 16) {
-                        wakeButtonJustPressed = true;
-                    }
-                } else if (numVal <= 0.1 && prevVal > 0.1) {
-                    anyInputJustReleased = true;
-                    if (polledWhilePressed[i] === 1) {
-                        buttonHoldUntil[i] = 0;
-                    }
-                }
-                rawButtons[i] = numVal;
-            }
+            wakeButtonJustPressed = updateRawStateFromArrays(buttons, axes);
         } else {
             pollFromAndroid();
         }
 
-        if (axes && axes.length >= 4) {
-            for (let i = 0; i < 4; i++) {
-                const numVal = Number(axes[i]) || 0.0;
-                const prevVal = rawAxes[i];
-                if (Math.abs(numVal) <= 0.01 && Math.abs(prevVal) > 0.01) {
-                    anyInputJustReleased = true;
-                }
-                rawAxes[i] = numVal;
-            }
-        }
-
-        buildGamepadSnapshot();
-
-        if (anyInputJustReleased || !wasAnyNonZero) {
-            dispatchGamepadConnected(true);
-            setTimeout(function() {
-                flushRetiredSnapshots();
-                buildGamepadSnapshot();
-                if (!wasAnyNonZero) {
-                    dispatchGamepadConnected(true);
-                }
-            }, 18);
-        } else if (wakeButtonJustPressed) {
+        if (wakeButtonJustPressed) {
+            buildGamepadSnapshot(false);
             dispatchGamepadConnected(true);
         }
     };
@@ -567,18 +563,7 @@
         if (now - lastDirectInputTime > 12) {
             pollFromAndroid();
         }
-        const snap = buildGamepadSnapshot();
-        for (let i = 0; i < 17; i++) {
-            if (snap.buttons[i] && snap.buttons[i].pressed) {
-                polledWhilePressed[i] = 1;
-                if (rawButtons[i] <= 0.1) {
-                    buttonHoldUntil[i] = 0;
-                }
-            }
-        }
-        if (activeNonZeroSnapshots.length > 0 && (activeNonZeroSnapshots.length > 1 || !wasAnyNonZero)) {
-            setTimeout(flushRetiredSnapshots, 0);
-        }
+        const snap = buildGamepadSnapshot(true);
         dispatchGamepadConnected(false);
         return [snap, null, null, null];
     }

@@ -173,46 +173,25 @@ class MainActivity : ComponentActivity() {
             e.printStackTrace()
         }
 
-        // Bridge state changes to WebView via evaluateJavascript (Coalesced Zero-Backlog IPC Path)
-        var ipcInFlight = false
-        var ipcNeedsFollowUp = false
-
-        fun flushLatestStateToWebView() {
-            val wv = webViewInstance ?: return
-            if (!wv.hasFocus()) {
-                wv.requestFocus()
-            }
-            val latestArgs = stateManager.getSnapshot().fastJsArgs
-            ipcInFlight = true
-            wv.evaluateJavascript(
-                "window.onControllerInput ? (window.onControllerInput($latestArgs), true) : false;"
-            ) { result ->
-                ipcInFlight = false
-                if (result != "true") {
-                    injectController(wv, wv.url)
-                    val retryArgs = stateManager.getSnapshot().fastJsArgs
-                    wv.evaluateJavascript(
-                        "window.onControllerInput && window.onControllerInput($retryArgs);",
-                        null
-                    )
-                } else if (ipcNeedsFollowUp) {
-                    ipcNeedsFollowUp = false
-                    flushLatestStateToWebView()
-                }
-            }
-        }
-
+        // Bridge state changes to WebView via evaluateJavascript (Ordered Exact-State IPC Path)
         stateManager.onStateChanged = { snap ->
+            val exactArgs = snap.fastJsArgs
             runOnUiThread {
-                val isAllZero = snap.buttons.all { it == 0f } && snap.axes.all { it == 0f }
-                if (isAllZero) {
-                    // Always immediately push release/zero state without waiting for in-flight IPC
-                    ipcNeedsFollowUp = false
-                    flushLatestStateToWebView()
-                } else if (!ipcInFlight) {
-                    flushLatestStateToWebView()
-                } else {
-                    ipcNeedsFollowUp = true
+                webViewInstance?.let { wv ->
+                    if (!wv.hasFocus()) {
+                        wv.requestFocus()
+                    }
+                    wv.evaluateJavascript(
+                        "window.onControllerInput ? (window.onControllerInput($exactArgs), true) : false;"
+                    ) { result ->
+                        if (result != "true") {
+                            injectController(wv, wv.url)
+                            wv.evaluateJavascript(
+                                "window.onControllerInput && window.onControllerInput($exactArgs);",
+                                null
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -303,9 +282,9 @@ class MainActivity : ComponentActivity() {
                 prefs.edit().putBoolean("msa_stable_ua_reset_v1", true).apply()
             }
             // One-time HTTP script cache clear (preserves cookies and Xbox login session)
-            if (!prefs.getBoolean("webview_cache_refresh_v1_4", false)) {
+            if (!prefs.getBoolean("webview_cache_refresh_v1_5", false)) {
                 clearCache(true)
-                prefs.edit().putBoolean("webview_cache_refresh_v1_4", true).apply()
+                prefs.edit().putBoolean("webview_cache_refresh_v1_5", true).apply()
             }
 
             // Inject the AndroidControllerBridge to allow synchronous polling and live FPS telemetry from JS
