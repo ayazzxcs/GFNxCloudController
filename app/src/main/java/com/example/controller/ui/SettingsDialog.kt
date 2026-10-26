@@ -123,6 +123,13 @@ fun SettingsDialog(
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold
                         )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "v1.3",
+                            color = Color(0xFF10B981),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
                     }
                     IconButton(
                         onClick = onDismiss,

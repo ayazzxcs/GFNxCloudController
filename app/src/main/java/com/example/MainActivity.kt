@@ -282,6 +282,11 @@ class MainActivity : ComponentActivity() {
                 WebStorage.getInstance().deleteAllData()
                 prefs.edit().putBoolean("msa_stable_ua_reset_v1", true).apply()
             }
+            // One-time HTTP script cache clear (preserves cookies and Xbox login session)
+            if (!prefs.getBoolean("webview_cache_refresh_v1_3", false)) {
+                clearCache(true)
+                prefs.edit().putBoolean("webview_cache_refresh_v1_3", true).apply()
+            }
 
             // Inject the AndroidControllerBridge to allow synchronous polling and live FPS telemetry from JS
             val bridge = AndroidControllerBridge(
