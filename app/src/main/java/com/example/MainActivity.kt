@@ -174,20 +174,21 @@ class MainActivity : ComponentActivity() {
         }
 
         // Bridge state changes to WebView via evaluateJavascript (Fast Zero-Allocation IPC Path)
-        stateManager.onStateChanged = { snapshot ->
+        stateManager.onStateChanged = { _ ->
             runOnUiThread {
                 webViewInstance?.let { wv ->
                     if (!wv.hasFocus()) {
                         wv.requestFocus()
                     }
-                    val jsArgs = snapshot.fastJsArgs
+                    val latestArgs = stateManager.getSnapshot().fastJsArgs
                     wv.evaluateJavascript(
-                        "window.onControllerInput ? (window.onControllerInput($jsArgs), true) : false;"
+                        "window.onControllerInput ? (window.onControllerInput($latestArgs), true) : false;"
                     ) { result ->
                         if (result != "true") {
                             injectController(wv, wv.url)
+                            val retryArgs = stateManager.getSnapshot().fastJsArgs
                             wv.evaluateJavascript(
-                                "window.onControllerInput && window.onControllerInput($jsArgs);",
+                                "window.onControllerInput && window.onControllerInput($retryArgs);",
                                 null
                             )
                         }
@@ -217,6 +218,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onPause() {
+        stateManager.resetAll()
         super.onPause()
         webViewInstance?.onPause()
     }

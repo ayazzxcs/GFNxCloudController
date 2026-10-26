@@ -146,4 +146,13 @@ class ControllerStateManager {
     fun releaseStick(isLeft: Boolean) {
         setStick(isLeft, 0f, 0f)
     }
+
+    fun resetAll() {
+        val zeroSnapshot = GamepadSnapshot()
+        val prev = stateRef.getAndSet(zeroSnapshot)
+        if (prev != zeroSnapshot) {
+            onStateChanged?.invoke(zeroSnapshot)
+        }
+    }
 }
+

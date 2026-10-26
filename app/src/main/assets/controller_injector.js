@@ -25,16 +25,6 @@
 
     console.log("[GFNxCloud] Initializing virtual Xbox controller injector...");
 
-    // Minimum hold duration (ms) for sub-frame touchscreen taps so 60Hz xCloud + RE Engine
-    // input polling never misses a quick tap, without triggering menu auto-repeat.
-    const MIN_BUTTON_HOLD_MS = 45;
-
-    // Raw internal controller state (17 standard XInput buttons, 4 axes)
-    const rawButtons = new Float32Array(17);
-    const desiredButtons = new Float32Array(17);
-    const buttonHoldUntil = new Float64Array(17);
-    const buttonReleaseTimers = new Array(17).fill(null);
-    const rawAxes = new Float32Array(4);
     let lastTimestamp = performance.now();
 
     function nextMonotonicTimestamp() {
@@ -81,7 +71,11 @@
         };
     }
 
-    // Persistent reference used for gamepadconnected event.gamepad
+    // Single canonical virtualGamepad instance shared between `gamepadconnected` (ev.gamepad)
+    // and `navigator.getGamepads()[0]`.
+    // CRITICAL: Never return separate objects from `navigator.getGamepads()` vs `ev.gamepad`,
+    // because xCloud caches the active Gamepad object reference when input begins; creating
+    // separate snapshot objects leaves the pressed snapshot object stuck at 1.0 forever!
     const virtualGamepad = {
         id: "Xbox 360 Controller (XInput STANDARD GAMEPAD)",
         index: 0,
@@ -93,8 +87,9 @@
         vibrationActuator: vibrationActuator,
         hapticActuators: []
     };
+    window.__virtualGamepad = virtualGamepad;
 
-    // Allow `snapshot instanceof Gamepad` checks to succeed safely without prototype pollution
+    // Allow `virtualGamepad instanceof Gamepad` checks to succeed safely without prototype pollution
     try {
         if (window.Gamepad && typeof Symbol !== 'undefined' && Symbol.hasInstance) {
             const origHasInstance = Function.prototype[Symbol.hasInstance];
@@ -108,53 +103,10 @@
         }
     } catch (e) {}
 
-    // Build a fresh plain-JS Gamepad snapshot on every state change!
-    // CRITICAL: Never mutate the previously returned snapshot in-place!
-    // Xbox Cloud Gaming stores `this.lastGamepad = navigator.getGamepads()[0]` on Frame N
-    // and compares `this.lastGamepad` against `currentPad` on Frame N+1.
-    // Mutating in-place on release (1 -> 0) overwrites `this.lastGamepad` to 0 before Frame N+1 runs,
-    // causing xCloud to miss the release edge and keep scrolling forever.
     function buildGamepadSnapshot() {
-        const ts = nextMonotonicTimestamp();
-        const buttonsSnap = new Array(17);
-        for (let i = 0; i < 17; i++) {
-            const numVal = Number(rawButtons[i]) || 0.0;
-            buttonsSnap[i] = createButtonSnapshot(numVal);
-
-            const liveBtn = virtualGamepad.buttons[i];
-            liveBtn.pressed = numVal > 0.1;
-            liveBtn.touched = numVal > 0.0;
-            liveBtn.value = numVal;
-        }
-
-        const ax0 = Number(rawAxes[0]) || 0.0;
-        const ax1 = Number(rawAxes[1]) || 0.0;
-        const ax2 = Number(rawAxes[2]) || 0.0;
-        const ax3 = Number(rawAxes[3]) || 0.0;
-        const axesSnap = [ax0, ax1, ax2, ax3];
-
-        virtualGamepad.axes[0] = ax0;
-        virtualGamepad.axes[1] = ax1;
-        virtualGamepad.axes[2] = ax2;
-        virtualGamepad.axes[3] = ax3;
-        virtualGamepad.timestamp = ts;
-
-        const snapshot = {
-            id: "Xbox 360 Controller (XInput STANDARD GAMEPAD)",
-            index: 0,
-            connected: true,
-            timestamp: ts,
-            mapping: "standard",
-            axes: axesSnap,
-            buttons: buttonsSnap,
-            vibrationActuator: vibrationActuator,
-            hapticActuators: []
-        };
-        window.__virtualGamepad = snapshot;
-        return snapshot;
+        virtualGamepad.timestamp = nextMonotonicTimestamp();
+        return virtualGamepad;
     }
-
-    let currentGamepadSnapshot = buildGamepadSnapshot();
 
     // Override navigator.vibrate so any web/game stream calls respect the vibration setting
     const _origVibrate = navigator.vibrate ? navigator.vibrate.bind(navigator) : null;
@@ -331,173 +283,104 @@
         } catch (e) {}
     }
 
-    // Update a single button with minimum hold duration guarantee so ultra-short touchscreen taps
-    // stay pressed across MIN_BUTTON_HOLD_MS (~3 frames at 60Hz) and then reliably release to 0.
-    function updateButtonWithHoldLatch(index, targetVal, now) {
-        const cleanVal = Number(targetVal) || 0.0;
-        desiredButtons[index] = cleanVal;
-
-        if (cleanVal > 0.1) {
-            if (buttonReleaseTimers[index] !== null) {
-                clearTimeout(buttonReleaseTimers[index]);
-                buttonReleaseTimers[index] = null;
-            }
-            if (rawButtons[index] <= 0.1) {
-                buttonHoldUntil[index] = now + MIN_BUTTON_HOLD_MS;
-            }
-            if (Math.abs(rawButtons[index] - cleanVal) > 0.0001) {
-                rawButtons[index] = cleanVal;
-                return true;
-            }
-            return false;
-        } else {
-            const remainingHold = buttonHoldUntil[index] - now;
-            if (rawButtons[index] > 0.1 && remainingHold > 1) {
-                if (buttonReleaseTimers[index] === null) {
-                    buttonReleaseTimers[index] = setTimeout(() => {
-                        buttonReleaseTimers[index] = null;
-                        if (desiredButtons[index] <= 0.1 && rawButtons[index] !== 0.0) {
-                            rawButtons[index] = 0.0;
-                            currentGamepadSnapshot = buildGamepadSnapshot();
-                        }
-                    }, Math.ceil(remainingHold));
-                }
-                return false;
-            } else {
-                if (buttonReleaseTimers[index] !== null) {
-                    clearTimeout(buttonReleaseTimers[index]);
-                    buttonReleaseTimers[index] = null;
-                }
-                if (Math.abs(rawButtons[index] - cleanVal) > 0.0001) {
-                    rawButtons[index] = cleanVal;
-                    return true;
-                }
-                return false;
-            }
-        }
-    }
-
-    function flushExpiredButtonHolds(now) {
-        let changed = false;
-        for (let i = 0; i < 17; i++) {
-            if (rawButtons[i] > 0.1 && desiredButtons[i] <= 0.1 && now >= buttonHoldUntil[i]) {
-                rawButtons[i] = 0.0;
-                if (buttonReleaseTimers[i] !== null) {
-                    clearTimeout(buttonReleaseTimers[i]);
-                    buttonReleaseTimers[i] = null;
-                }
-                changed = true;
-            }
-        }
-        return changed;
-    }
-
-    // Synchronize latest state directly from AndroidBridge on every poll
+    // Directly synchronize virtualGamepad from AndroidBridge.getGamepadState() on EVERY call
+    // without caching or delayed release timers so button/stick releases (1 -> 0) are guaranteed
+    // to take effect immediately on the very next poll.
     const ZERO_STATE_JSON = '{"b":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"a":[0,0,0,0]}';
-    let lastRawGamepadState = "";
+
+    function resetVirtualGamepadToZero() {
+        for (let i = 0; i < 17; i++) {
+            const btn = virtualGamepad.buttons[i];
+            btn.pressed = false;
+            btn.touched = false;
+            btn.value = 0.0;
+        }
+        virtualGamepad.axes[0] = 0.0;
+        virtualGamepad.axes[1] = 0.0;
+        virtualGamepad.axes[2] = 0.0;
+        virtualGamepad.axes[3] = 0.0;
+    }
 
     function pollFromAndroid() {
-        const now = performance.now();
-        let changed = flushExpiredButtonHolds(now);
-
-        if (window.AndroidBridge && window.AndroidBridge.getGamepadState) {
+        let hasActiveInput = false;
+        if (window.AndroidBridge && typeof window.AndroidBridge.getGamepadState === 'function') {
             try {
                 const raw = window.AndroidBridge.getGamepadState();
-                if (raw === ZERO_STATE_JSON) {
-                    // Fast self-healing zero path: whenever Android reports all buttons/axes released,
-                    // guarantee desiredButtons and rawAxes are 0 so no button or stick can ever stick!
-                    lastRawGamepadState = raw;
-                    for (let i = 0; i < 17; i++) {
-                        if (updateButtonWithHoldLatch(i, 0.0, now)) {
-                            changed = true;
-                        }
-                    }
-                    for (let i = 0; i < 4; i++) {
-                        if (Math.abs(rawAxes[i]) > 0.0001) {
-                            rawAxes[i] = 0.0;
-                            changed = true;
-                        }
-                    }
-                } else if (raw && raw !== lastRawGamepadState) {
-                    lastRawGamepadState = raw;
+                if (!raw || raw === ZERO_STATE_JSON) {
+                    resetVirtualGamepadToZero();
+                } else {
                     const state = JSON.parse(raw);
                     if (state.b) {
                         for (let i = 0; i < 17; i++) {
-                            if (updateButtonWithHoldLatch(i, state.b[i], now)) {
-                                changed = true;
-                            }
+                            const numVal = Number(state.b[i]) || 0.0;
+                            const isPressed = numVal > 0.1;
+                            if (isPressed) hasActiveInput = true;
+                            const btn = virtualGamepad.buttons[i];
+                            btn.pressed = isPressed;
+                            btn.touched = numVal > 0.0;
+                            btn.value = numVal;
+                        }
+                    } else {
+                        for (let i = 0; i < 17; i++) {
+                            const btn = virtualGamepad.buttons[i];
+                            btn.pressed = false;
+                            btn.touched = false;
+                            btn.value = 0.0;
                         }
                     }
                     if (state.a) {
                         for (let i = 0; i < 4; i++) {
-                            const val = Number(state.a[i]) || 0.0;
-                            if (Math.abs(rawAxes[i] - val) > 0.0001) {
-                                rawAxes[i] = val;
-                                changed = true;
-                            }
+                            const numVal = Number(state.a[i]) || 0.0;
+                            if (Math.abs(numVal) > 0.05) hasActiveInput = true;
+                            virtualGamepad.axes[i] = numVal;
                         }
+                    } else {
+                        virtualGamepad.axes[0] = 0.0;
+                        virtualGamepad.axes[1] = 0.0;
+                        virtualGamepad.axes[2] = 0.0;
+                        virtualGamepad.axes[3] = 0.0;
                     }
                 }
-            } catch (e) {}
+            } catch (e) {
+                resetVirtualGamepadToZero();
+            }
         }
-
-        if (changed) {
-            currentGamepadSnapshot = buildGamepadSnapshot();
-        }
+        virtualGamepad.timestamp = nextMonotonicTimestamp();
+        return hasActiveInput;
     }
 
     // Direct fast-path called from Kotlin evaluateJavascript for instant reaction.
-    // When AndroidBridge is available, always pull from the atomic AndroidBridge.getGamepadState()
-    // single source of truth so queued IPC move events can never overwrite a newer release state.
     window.onControllerInput = function(buttons, axes) {
         if (window.AndroidBridge && typeof window.AndroidBridge.getGamepadState === 'function') {
-            lastRawGamepadState = "";
-            pollFromAndroid();
-            for (let i = 0; i < 17; i++) {
-                if (rawButtons[i] > 0.05) {
-                    ensureStreamActiveFocus();
-                    break;
-                }
-            }
-            for (let i = 0; i < 4; i++) {
-                if (Math.abs(rawAxes[i]) > 0.05) {
-                    ensureStreamActiveFocus();
-                    break;
-                }
+            const hasActive = pollFromAndroid();
+            if (hasActive) {
+                ensureStreamActiveFocus();
             }
             dispatchGamepadConnected(false);
             return;
         }
 
-        const now = performance.now();
-        lastRawGamepadState = "";
-        let changed = false;
         let hasActiveInput = false;
-
         if (buttons && buttons.length >= 17) {
             for (let i = 0; i < 17; i++) {
-                const val = Number(buttons[i]) || 0.0;
-                if (val > 0.05) hasActiveInput = true;
-                if (updateButtonWithHoldLatch(i, val, now)) {
-                    changed = true;
-                }
+                const numVal = Number(buttons[i]) || 0.0;
+                const isPressed = numVal > 0.1;
+                if (isPressed) hasActiveInput = true;
+                const btn = virtualGamepad.buttons[i];
+                btn.pressed = isPressed;
+                btn.touched = numVal > 0.0;
+                btn.value = numVal;
             }
         }
         if (axes && axes.length >= 4) {
             for (let i = 0; i < 4; i++) {
-                const val = Number(axes[i]) || 0.0;
-                if (Math.abs(val) > 0.05) hasActiveInput = true;
-                if (Math.abs(rawAxes[i] - val) > 0.0001) {
-                    rawAxes[i] = val;
-                    changed = true;
-                }
+                const numVal = Number(axes[i]) || 0.0;
+                if (Math.abs(numVal) > 0.05) hasActiveInput = true;
+                virtualGamepad.axes[i] = numVal;
             }
         }
 
-        if (changed) {
-            currentGamepadSnapshot = buildGamepadSnapshot();
-        }
-
+        virtualGamepad.timestamp = nextMonotonicTimestamp();
         if (hasActiveInput) {
             ensureStreamActiveFocus();
         }
@@ -510,7 +393,7 @@
     function virtualGetGamepads() {
         pollFromAndroid();
         dispatchGamepadConnected(false);
-        return [currentGamepadSnapshot, null, null, null];
+        return [virtualGamepad, null, null, null];
     }
 
     try {

@@ -22,11 +22,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -80,6 +82,13 @@ fun GFNControllerOverlay(
     modifier: Modifier = Modifier
 ) {
     val pressedMap = remember { mutableStateMapOf<Int, Boolean>() }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            pressedMap.clear()
+            stateManager.resetAll()
+        }
+    }
 
     fun handleButtonChange(btnIndex: Int, isPressed: Boolean) {
         val wasPressed = pressedMap[btnIndex] == true
@@ -391,6 +400,7 @@ fun CircularGamepadButton(
     onPressChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val currentOnPressChange by rememberUpdatedState(onPressChange)
     val borderColor = if (isPressed) Color.White else Color(0x75FFFFFF)
     val bgColor = if (isPressed) Color(0x66FFFFFF) else Color(0x30000000)
 
@@ -405,7 +415,7 @@ fun CircularGamepadButton(
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     down.consume()
-                    onPressChange(true)
+                    currentOnPressChange(true)
                     val pointerId = down.id
 
                     try {
@@ -418,7 +428,7 @@ fun CircularGamepadButton(
                             change.consume()
                         }
                     } finally {
-                        onPressChange(false)
+                        currentOnPressChange(false)
                     }
                 }
             }
@@ -445,6 +455,7 @@ fun ChevronGamepadButton(
     onPressChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val currentOnPressChange by rememberUpdatedState(onPressChange)
     val borderColor = if (isPressed) Color.White else Color(0x75FFFFFF)
     val bgColor = if (isPressed) Color(0x66FFFFFF) else Color(0x30000000)
     val strokeColor = if (isPressed) Color.White else Color(0xF5FFFFFF)
@@ -460,7 +471,7 @@ fun ChevronGamepadButton(
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     down.consume()
-                    onPressChange(true)
+                    currentOnPressChange(true)
                     val pointerId = down.id
 
                     try {
@@ -473,7 +484,7 @@ fun ChevronGamepadButton(
                             change.consume()
                         }
                     } finally {
-                        onPressChange(false)
+                        currentOnPressChange(false)
                     }
                 }
             }
@@ -532,6 +543,7 @@ fun PillIconButton(
     onPressChange: (Boolean) -> Unit,
     testTag: String
 ) {
+    val currentOnPressChange by rememberUpdatedState(onPressChange)
     val borderColor = if (isPressed) Color.White else Color(0x75FFFFFF)
     val bgColor = if (isPressed) Color(0x66FFFFFF) else Color(0x30000000)
     val arrowColor = if (isPressed) Color.White else Color(0xF5FFFFFF)
@@ -548,7 +560,7 @@ fun PillIconButton(
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     down.consume()
-                    onPressChange(true)
+                    currentOnPressChange(true)
                     val pointerId = down.id
 
                     try {
@@ -561,7 +573,7 @@ fun PillIconButton(
                             change.consume()
                         }
                     } finally {
-                        onPressChange(false)
+                        currentOnPressChange(false)
                     }
                 }
             }
@@ -600,6 +612,8 @@ fun GfnGamepadMenuButton(
     onOpenSettings: () -> Unit,
     testTag: String
 ) {
+    val currentOnPressChange by rememberUpdatedState(onPressChange)
+    val currentOnOpenSettings by rememberUpdatedState(onOpenSettings)
     val borderColor = if (isPressed) Color.White else Color(0x75FFFFFF)
     val bgColor = if (isPressed) Color(0x66FFFFFF) else Color(0x30000000)
 
@@ -615,7 +629,7 @@ fun GfnGamepadMenuButton(
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     down.consume()
-                    onPressChange(true)
+                    currentOnPressChange(true)
                     val pointerId = down.id
                     var releasedCleanly = false
 
@@ -630,9 +644,9 @@ fun GfnGamepadMenuButton(
                             change.consume()
                         }
                     } finally {
-                        onPressChange(false)
+                        currentOnPressChange(false)
                         if (releasedCleanly) {
-                            onOpenSettings()
+                            currentOnOpenSettings()
                         }
                     }
                 }
@@ -790,6 +804,7 @@ fun AnalogThumbStick(
     onStickMove: (x: Float, y: Float) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val currentOnStickMove by rememberUpdatedState(onStickMove)
     var rawOffset by remember { mutableStateOf(Offset.Zero) }
     var isDragging by remember { mutableStateOf(false) }
     var releaseStartOffset by remember { mutableStateOf(Offset.Zero) }
@@ -849,11 +864,11 @@ fun AnalogThumbStick(
 
                             val normX = if (rawNorm > 0f) (cos(angle) * calibratedNorm).coerceIn(-1f, 1f) else 0f
                             val normY = if (rawNorm > 0f) (sin(angle) * calibratedNorm).coerceIn(-1f, 1f) else 0f
-                            onStickMove(normX, normY)
+                            currentOnStickMove(normX, normY)
                         } else {
                             val normX = (clampedOffset.x / maxTravelRadius).coerceIn(-1f, 1f)
                             val normY = (clampedOffset.y / maxTravelRadius).coerceIn(-1f, 1f)
-                            onStickMove(normX, normY)
+                            currentOnStickMove(normX, normY)
                         }
                     }
 
@@ -872,7 +887,7 @@ fun AnalogThumbStick(
                     } finally {
                         isDragging = false
                         rawOffset = Offset.Zero
-                        onStickMove(0f, 0f)
+                        currentOnStickMove(0f, 0f)
                     }
                 }
             }

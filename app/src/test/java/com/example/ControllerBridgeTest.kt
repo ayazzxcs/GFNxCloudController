@@ -96,6 +96,14 @@ class ControllerBridgeTest {
         val snapReleased = manager.getSnapshot()
         assertEquals(0.0f, snapReleased.axes[GamepadConstants.AXIS_LS_X], 0.001f)
         assertEquals(0.0f, snapReleased.axes[GamepadConstants.AXIS_LS_Y], 0.001f)
+
+        // Test Full Reset
+        manager.setButton(GamepadConstants.BTN_DPAD_DOWN, true)
+        manager.resetAll()
+        val snapReset = manager.getSnapshot()
+        assertEquals(0.0f, snapReset.buttons[GamepadConstants.BTN_DPAD_DOWN], 0.001f)
+        assertEquals(0.0f, snapReset.axes[GamepadConstants.AXIS_RS_X], 0.001f)
+        assertEquals(0.0f, snapReset.axes[GamepadConstants.AXIS_RS_Y], 0.001f)
     }
 
     @Test
@@ -254,8 +262,8 @@ class ControllerBridgeTest {
         assertTrue(script.contains("document.hasFocus"))
         assertTrue(script.contains("ensureStreamActiveFocus"))
         assertTrue(script.contains("history.pushState"))
-        assertTrue(script.contains("MIN_BUTTON_HOLD_MS"))
-        assertTrue(script.contains("updateButtonWithHoldLatch"))
+        assertTrue(script.contains("resetVirtualGamepadToZero"))
         assertTrue(script.contains("stopImmediatePropagation"))
     }
 }
+
