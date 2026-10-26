@@ -180,10 +180,18 @@ class MainActivity : ComponentActivity() {
                     if (!wv.hasFocus()) {
                         wv.requestFocus()
                     }
+                    val jsArgs = snapshot.fastJsArgs
                     wv.evaluateJavascript(
-                        "window.onControllerInput && window.onControllerInput(${snapshot.fastJsArgs});",
-                        null
-                    )
+                        "window.onControllerInput ? (window.onControllerInput($jsArgs), true) : false;"
+                    ) { result ->
+                        if (result != "true") {
+                            injectController(wv, wv.url)
+                            wv.evaluateJavascript(
+                                "window.onControllerInput && window.onControllerInput($jsArgs);",
+                                null
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -319,8 +327,8 @@ class MainActivity : ComponentActivity() {
                 override fun onProgressChanged(view: WebView?, newProgress: Int) {
                     super.onProgressChanged(view, newProgress)
                     _loadingProgress.value = newProgress
-                    if (newProgress >= 20 && !isAuthUrl(view?.url)) {
-                        injectController(view)
+                    if (newProgress >= 15 && !isAuthUrl(view?.url)) {
+                        injectController(view, view?.url)
                     }
                 }
             }
@@ -354,14 +362,21 @@ class MainActivity : ComponentActivity() {
                     _loadingProgress.value = 10
                     CookieManager.getInstance().flush()
                     if (!isAuthUrl(url)) {
-                        injectController(view)
+                        injectController(view, url)
+                    }
+                }
+
+                override fun onPageCommitVisible(view: WebView?, url: String?) {
+                    super.onPageCommitVisible(view, url)
+                    if (!isAuthUrl(url)) {
+                        injectController(view, url)
                     }
                 }
 
                 override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
                     super.doUpdateVisitedHistory(view, url, isReload)
                     if (!isAuthUrl(url)) {
-                        injectController(view)
+                        injectController(view, url)
                     }
                 }
 
@@ -370,7 +385,7 @@ class MainActivity : ComponentActivity() {
                     _loadingProgress.value = 100
                     CookieManager.getInstance().flush()
                     if (!isAuthUrl(url)) {
-                        injectController(view)
+                        injectController(view, url)
                     }
                 }
 
@@ -393,13 +408,13 @@ class MainActivity : ComponentActivity() {
         return webView
     }
 
-    private fun injectController(view: WebView?) {
-        val currentUrl = view?.url ?: ""
+    private fun injectController(view: WebView?, targetUrl: String? = view?.url) {
+        val currentUrl = (targetUrl ?: view?.url ?: "").lowercase()
         // NEVER inject controller scripts into Microsoft login/authentication pages to prevent anti-bot DOM flags
         if (isAuthUrl(currentUrl) || currentUrl.contains("/auth")) {
             return
         }
-        if (injectorScript.isNotEmpty() && currentUrl.contains("xbox.com") && currentUrl.contains("/play")) {
+        if (injectorScript.isNotEmpty() && currentUrl.contains("xbox.com")) {
             view?.evaluateJavascript(injectorScript) {
                 val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 val isClarity = prefs.getBoolean("clarity_boost", false)
@@ -730,7 +745,14 @@ fun MainScreen(
                         e.printStackTrace()
                     }
                 },
-                onDismiss = { showSettingsDialog = false }
+                onDismiss = {
+                    showSettingsDialog = false
+                    webView.requestFocus()
+                    webView.evaluateJavascript(
+                        "try { window.dispatchEvent(new FocusEvent('focus')); } catch(e) { window.dispatchEvent(new Event('focus')); }",
+                        null
+                    )
+                }
             )
         }
     }

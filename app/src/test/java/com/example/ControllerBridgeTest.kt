@@ -254,5 +254,8 @@ class ControllerBridgeTest {
         assertTrue(script.contains("document.hasFocus"))
         assertTrue(script.contains("ensureStreamActiveFocus"))
         assertTrue(script.contains("history.pushState"))
+        assertTrue(script.contains("MIN_BUTTON_HOLD_MS"))
+        assertTrue(script.contains("updateButtonWithHoldLatch"))
+        assertTrue(script.contains("stopImmediatePropagation"))
     }
 }

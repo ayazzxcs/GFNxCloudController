@@ -17,7 +17,7 @@
 
     if (window.__GFN_CONTROLLER_INJECTED__) {
         if (typeof window.__dispatchGamepadConnected === 'function') {
-            window.__dispatchGamepadConnected(true);
+            window.__dispatchGamepadConnected(false);
         }
         return;
     }
@@ -25,10 +25,23 @@
 
     console.log("[GFNxCloud] Initializing virtual Xbox controller injector...");
 
+    // Minimum hold duration (ms) for rapid touchscreen taps so 60Hz xCloud + RE Engine
+    // input polling never misses a sub-frame tap between requestAnimationFrame ticks.
+    const MIN_BUTTON_HOLD_MS = 75;
+
     // Raw internal controller state (17 standard XInput buttons, 4 axes)
     const rawButtons = new Float32Array(17);
+    const desiredButtons = new Float32Array(17);
+    const buttonHoldUntil = new Float64Array(17);
+    const buttonReleaseTimers = new Array(17).fill(null);
     const rawAxes = new Float32Array(4);
     let lastTimestamp = performance.now();
+
+    function nextMonotonicTimestamp() {
+        const now = performance.now();
+        lastTimestamp = now > lastTimestamp ? now : (lastTimestamp + 0.01);
+        return lastTimestamp;
+    }
 
     const vibrationActuator = {
         type: "dual-rumble",
@@ -61,56 +74,60 @@
 
     function createButtonSnapshot(val) {
         const numVal = Number(val) || 0.0;
-        const btn = {
+        return {
             pressed: numVal > 0.1,
             touched: numVal > 0.0,
             value: numVal
         };
-        try {
-            if (window.GamepadButton && window.GamepadButton.prototype) {
-                Object.setPrototypeOf(btn, window.GamepadButton.prototype);
-            }
-        } catch (e) {}
-        return btn;
     }
 
-    // Build a fresh immutable Gamepad snapshot whenever state changes so xCloud & RE Engine
-    // diff pollers (which compare previousPad.timestamp !== currentPad.timestamp and
-    // previousPad.buttons[i].pressed !== currentPad.buttons[i].pressed) always detect edges.
-    function buildGamepadSnapshot() {
-        const now = performance.now();
-        lastTimestamp = now > lastTimestamp ? now : (lastTimestamp + 0.01);
+    // Persistent standard XInput virtual gamepad object (Slot 0).
+    // IMPORTANT: Keep as a plain JS object (do NOT set Gamepad.prototype, which causes
+    // Chromium WebIDL 'Illegal invocation' errors when unshadowed getters are accessed).
+    const virtualGamepad = {
+        id: "Xbox 360 Controller (XInput STANDARD GAMEPAD)",
+        index: 0,
+        connected: true,
+        timestamp: lastTimestamp,
+        mapping: "standard",
+        axes: [0.0, 0.0, 0.0, 0.0],
+        buttons: Array.from({ length: 17 }, () => createButtonSnapshot(0.0)),
+        vibrationActuator: vibrationActuator,
+        hapticActuators: []
+    };
 
-        const buttonsSnap = new Array(17);
-        for (let i = 0; i < 17; i++) {
-            buttonsSnap[i] = createButtonSnapshot(rawButtons[i]);
+    // Allow `virtualGamepad instanceof Gamepad` checks to succeed safely without prototype pollution
+    try {
+        if (window.Gamepad && typeof Symbol !== 'undefined' && Symbol.hasInstance) {
+            const origHasInstance = Function.prototype[Symbol.hasInstance];
+            Object.defineProperty(window.Gamepad, Symbol.hasInstance, {
+                value: function(instance) {
+                    if (instance === virtualGamepad) return true;
+                    return origHasInstance ? origHasInstance.call(this, instance) : false;
+                },
+                configurable: true
+            });
         }
+    } catch (e) {}
 
-        const axesSnap = [rawAxes[0], rawAxes[1], rawAxes[2], rawAxes[3]];
-
-        const snapshot = {
-            id: "Xbox 360 Controller (XInput STANDARD GAMEPAD)",
-            index: 0,
-            connected: true,
-            timestamp: lastTimestamp,
-            mapping: "standard",
-            axes: axesSnap,
-            buttons: buttonsSnap,
-            vibrationActuator: vibrationActuator,
-            hapticActuators: []
-        };
-
-        try {
-            if (window.Gamepad && window.Gamepad.prototype) {
-                Object.setPrototypeOf(snapshot, window.Gamepad.prototype);
-            }
-        } catch (e) {}
-
-        return snapshot;
+    function buildGamepadSnapshot() {
+        virtualGamepad.timestamp = nextMonotonicTimestamp();
+        for (let i = 0; i < 17; i++) {
+            const numVal = Number(rawButtons[i]) || 0.0;
+            const btn = virtualGamepad.buttons[i];
+            btn.pressed = numVal > 0.1;
+            btn.touched = numVal > 0.0;
+            btn.value = numVal;
+        }
+        virtualGamepad.axes[0] = Number(rawAxes[0]) || 0.0;
+        virtualGamepad.axes[1] = Number(rawAxes[1]) || 0.0;
+        virtualGamepad.axes[2] = Number(rawAxes[2]) || 0.0;
+        virtualGamepad.axes[3] = Number(rawAxes[3]) || 0.0;
+        return virtualGamepad;
     }
 
     let currentGamepadSnapshot = buildGamepadSnapshot();
-    window.__virtualGamepad = currentGamepadSnapshot;
+    window.__virtualGamepad = virtualGamepad;
 
     // Override navigator.vibrate so any web/game stream calls respect the vibration setting
     const _origVibrate = navigator.vibrate ? navigator.vibrate.bind(navigator) : null;
@@ -126,38 +143,32 @@
     };
 
     function createGamepadEvent(type, gamepadObj) {
+        let ev;
         try {
-            return new GamepadEvent(type, { gamepad: gamepadObj });
+            ev = new Event(type, { bubbles: false, cancelable: false });
         } catch (e) {
-            let ev;
-            try {
-                ev = new Event(type, { bubbles: false, cancelable: false });
-            } catch (e2) {
-                ev = new CustomEvent(type, { detail: { gamepad: gamepadObj } });
-            }
-            ev.gamepad = gamepadObj;
-            return ev;
+            ev = new CustomEvent(type, { detail: { gamepad: gamepadObj } });
         }
+        ev.gamepad = gamepadObj;
+        return ev;
     }
 
+    // Track listeners so each registered 'gamepadconnected' listener in xCloud is notified
+    // cleanly without duplicate connection spam (which causes Xbox OS / Resident Evil 2 & 3
+    // to think multiple controllers are hot-plugging and pop up "Press A on the controller you want to use").
+    const notifiedListeners = typeof WeakSet !== 'undefined' ? new WeakSet() : null;
     let hasFiredConnected = false;
-    let lastConnectedHref = "";
-    let lastConnectedDispatchTime = 0;
+    let lastConnectedPathname = "";
 
     function dispatchGamepadConnected(force) {
-        const now = performance.now();
-        const href = (window.location && window.location.href) ? window.location.href : "";
-        const routeChanged = href !== lastConnectedHref;
+        const pathname = (window.location && window.location.pathname) ? window.location.pathname : "";
+        const routeChanged = pathname !== lastConnectedPathname;
 
         if (!hasFiredConnected || force || routeChanged) {
-            if (!force && !routeChanged && (now - lastConnectedDispatchTime < 500)) {
-                return;
-            }
             hasFiredConnected = true;
-            lastConnectedHref = href;
-            lastConnectedDispatchTime = now;
+            lastConnectedPathname = pathname;
 
-            const ev = createGamepadEvent("gamepadconnected", currentGamepadSnapshot);
+            const ev = createGamepadEvent("gamepadconnected", virtualGamepad);
             try {
                 window.dispatchEvent(ev);
             } catch (e) {}
@@ -166,41 +177,119 @@
                     window.ongamepadconnected(ev);
                 }
             } catch (e) {}
-            console.log("[GFNxCloud] gamepadconnected event dispatched for", href);
+            console.log("[GFNxCloud] gamepadconnected event dispatched for", pathname);
         }
     }
 
     window.__dispatchGamepadConnected = dispatchGamepadConnected;
 
-    // Intercept window.addEventListener so if Xbox Cloud Gaming's stream engine attaches a
-    // 'gamepadconnected' listener dynamically when launching Resident Evil, it immediately
-    // receives the connection event for Slot 0.
-    const origAddEventListener = window.addEventListener ? window.addEventListener.bind(window) : null;
-    if (origAddEventListener) {
+    // =========================================================================
+    // FOCUS LOCK & EVENT GUARD:
+    // Prevent Android Compose overlay touches or SettingsDialog window focus transitions
+    // from firing 'blur' or 'visibilitychange' on window/document (which causes xCloud's
+    // GamepadInputProcessor to set isFocused=false and ignore all controller inputs).
+    // =========================================================================
+    try {
+        window.addEventListener('blur', function(e) {
+            e.stopImmediatePropagation();
+            e.stopPropagation();
+        }, true);
+        window.addEventListener('focusout', function(e) {
+            e.stopImmediatePropagation();
+            e.stopPropagation();
+        }, true);
+        document.addEventListener('visibilitychange', function(e) {
+            e.stopImmediatePropagation();
+            e.stopPropagation();
+        }, true);
+        document.addEventListener('webkitvisibilitychange', function(e) {
+            e.stopImmediatePropagation();
+            e.stopPropagation();
+        }, true);
+
+        // Block native 'gamepadconnected' and 'gamepaddisconnected' events from phantom Android
+        // sensors (e.g. fingerprint/gyroscope InputDevices) so Slot 0 virtualGamepad is the ONLY controller.
+        window.addEventListener('gamepadconnected', function(e) {
+            if (e && e.gamepad && e.gamepad !== virtualGamepad && e.gamepad.id !== virtualGamepad.id) {
+                e.stopImmediatePropagation();
+                e.stopPropagation();
+            }
+        }, true);
+        window.addEventListener('gamepaddisconnected', function(e) {
+            e.stopImmediatePropagation();
+            e.stopPropagation();
+        }, true);
+
+        Object.defineProperty(window, 'onblur', {
+            get: () => null,
+            set: () => {},
+            configurable: true
+        });
+        Object.defineProperty(document, 'onvisibilitychange', {
+            get: () => null,
+            set: () => {},
+            configurable: true
+        });
+    } catch (e) {}
+
+    // Intercept addEventListener on Window and EventTarget so:
+    // 1. 'blur' and 'visibilitychange' listeners never pause xCloud's input loop
+    // 2. Any new 'gamepadconnected' listener attached when launching Resident Evil immediately
+    //    receives the virtualGamepad connection event once.
+    const origWindowAddEventListener = window.addEventListener ? window.addEventListener.bind(window) : null;
+    if (origWindowAddEventListener) {
         window.addEventListener = function(type, listener, options) {
-            const res = origAddEventListener(type, listener, options);
-            if (type === "gamepadconnected" && typeof listener === "function") {
-                setTimeout(() => {
-                    try {
-                        const ev = createGamepadEvent("gamepadconnected", currentGamepadSnapshot);
-                        if (typeof listener === "function") {
-                            listener.call(window, ev);
-                        } else if (listener && typeof listener.handleEvent === "function") {
-                            listener.handleEvent(ev);
-                        }
-                    } catch (e) {}
-                }, 15);
+            if (type === "blur" || type === "focusout" || type === "visibilitychange" || type === "webkitvisibilitychange" || type === "gamepaddisconnected") {
+                return;
+            }
+            const res = origWindowAddEventListener(type, listener, options);
+            if (type === "gamepadconnected" && listener) {
+                const alreadyNotified = notifiedListeners && typeof listener === "object" || typeof listener === "function"
+                    ? notifiedListeners.has(listener)
+                    : false;
+                if (!alreadyNotified) {
+                    if (notifiedListeners && (typeof listener === "function" || typeof listener === "object")) {
+                        notifiedListeners.add(listener);
+                    }
+                    setTimeout(() => {
+                        try {
+                            const ev = createGamepadEvent("gamepadconnected", virtualGamepad);
+                            if (typeof listener === "function") {
+                                listener.call(window, ev);
+                            } else if (listener && typeof listener.handleEvent === "function") {
+                                listener.handleEvent(ev);
+                            }
+                        } catch (e) {}
+                    }, 15);
+                }
             }
             return res;
         };
     }
 
-    // Ensure the WebRTC stream container and window stay focused while the user interacts
+    const origDocAddEventListener = document.addEventListener ? document.addEventListener.bind(document) : null;
+    if (origDocAddEventListener) {
+        document.addEventListener = function(type, listener, options) {
+            if (type === "visibilitychange" || type === "webkitvisibilitychange" || type === "blur" || type === "focusout") {
+                return;
+            }
+            return origDocAddEventListener(type, listener, options);
+        };
+    }
+
+    // Ensure the WebRTC stream container and window stay actively focused while the user interacts
     // with the native Android Compose controller overlay above the WebView.
+    let lastFocusDispatchTime = 0;
     function ensureStreamActiveFocus() {
         try {
-            if (typeof window.focus === 'function') {
-                window.focus();
+            const now = performance.now();
+            if (now - lastFocusDispatchTime > 400) {
+                lastFocusDispatchTime = now;
+                try {
+                    window.dispatchEvent(new FocusEvent('focus'));
+                } catch (e) {
+                    window.dispatchEvent(new Event('focus'));
+                }
             }
             const streamEl = document.querySelector('video, [data-testid="media-container"], #game-stream');
             if (streamEl && document.activeElement !== streamEl) {
@@ -214,21 +303,80 @@
         } catch (e) {}
     }
 
+    // Update a single button with minimum hold duration guarantee so rapid touchscreen taps
+    // stay pressed across at least MIN_BUTTON_HOLD_MS (~5 frames at 60Hz).
+    function updateButtonWithHoldLatch(index, targetVal, now) {
+        const cleanVal = Number(targetVal) || 0.0;
+        desiredButtons[index] = cleanVal;
+
+        if (cleanVal > 0.1) {
+            // Button pressed or analog trigger engaged
+            if (buttonReleaseTimers[index] !== null) {
+                clearTimeout(buttonReleaseTimers[index]);
+                buttonReleaseTimers[index] = null;
+            }
+            if (rawButtons[index] <= 0.1) {
+                buttonHoldUntil[index] = now + MIN_BUTTON_HOLD_MS;
+            }
+            if (Math.abs(rawButtons[index] - cleanVal) > 0.0001) {
+                rawButtons[index] = cleanVal;
+                return true;
+            }
+            return false;
+        } else {
+            // Button released: check if minimum hold window is still active
+            const remainingHold = buttonHoldUntil[index] - now;
+            if (rawButtons[index] > 0.1 && remainingHold > 1) {
+                if (buttonReleaseTimers[index] === null) {
+                    buttonReleaseTimers[index] = setTimeout(() => {
+                        buttonReleaseTimers[index] = null;
+                        if (desiredButtons[index] <= 0.1) {
+                            rawButtons[index] = 0.0;
+                            currentGamepadSnapshot = buildGamepadSnapshot();
+                        }
+                    }, Math.ceil(remainingHold));
+                }
+                return false;
+            } else {
+                if (Math.abs(rawButtons[index] - cleanVal) > 0.0001) {
+                    rawButtons[index] = cleanVal;
+                    return true;
+                }
+                return false;
+            }
+        }
+    }
+
+    function flushExpiredButtonHolds(now) {
+        let changed = false;
+        for (let i = 0; i < 17; i++) {
+            if (rawButtons[i] > 0.1 && desiredButtons[i] <= 0.1 && now >= buttonHoldUntil[i]) {
+                rawButtons[i] = 0.0;
+                if (buttonReleaseTimers[i] !== null) {
+                    clearTimeout(buttonReleaseTimers[i]);
+                    buttonReleaseTimers[i] = null;
+                }
+                changed = true;
+            }
+        }
+        return changed;
+    }
+
     // Synchronize latest state directly from AndroidBridge if available
     let lastRawGamepadState = "";
     function pollFromAndroid() {
+        const now = performance.now();
+        let changed = flushExpiredButtonHolds(now);
+
         if (window.AndroidBridge && window.AndroidBridge.getGamepadState) {
             try {
                 const raw = window.AndroidBridge.getGamepadState();
                 if (raw && raw !== lastRawGamepadState) {
                     lastRawGamepadState = raw;
                     const state = JSON.parse(raw);
-                    let changed = false;
                     if (state.b) {
                         for (let i = 0; i < 17; i++) {
-                            const val = Number(state.b[i]) || 0.0;
-                            if (Math.abs(rawButtons[i] - val) > 0.0001) {
-                                rawButtons[i] = val;
+                            if (updateButtonWithHoldLatch(i, state.b[i], now)) {
                                 changed = true;
                             }
                         }
@@ -242,18 +390,35 @@
                             }
                         }
                     }
-                    if (changed) {
-                        currentGamepadSnapshot = buildGamepadSnapshot();
-                        window.__virtualGamepad = currentGamepadSnapshot;
-                    }
                 }
             } catch (e) {}
+        }
+
+        // Check if any button or stick is actively held so timestamp advances every frame during hold
+        let anyActive = false;
+        for (let i = 0; i < 17; i++) {
+            if (rawButtons[i] > 0.01) {
+                anyActive = true;
+                break;
+            }
+        }
+        if (!anyActive) {
+            for (let i = 0; i < 4; i++) {
+                if (Math.abs(rawAxes[i]) > 0.01) {
+                    anyActive = true;
+                    break;
+                }
+            }
+        }
+
+        if (changed || anyActive) {
+            currentGamepadSnapshot = buildGamepadSnapshot();
         }
     }
 
     // Direct fast-path called from Kotlin evaluateJavascript for instant reaction
     window.onControllerInput = function(buttons, axes) {
-        lastRawGamepadState = "";
+        const now = performance.now();
         let changed = false;
         let hasActiveInput = false;
 
@@ -261,8 +426,7 @@
             for (let i = 0; i < 17; i++) {
                 const val = Number(buttons[i]) || 0.0;
                 if (val > 0.05) hasActiveInput = true;
-                if (Math.abs(rawButtons[i] - val) > 0.0001) {
-                    rawButtons[i] = val;
+                if (updateButtonWithHoldLatch(i, val, now)) {
                     changed = true;
                 }
             }
@@ -278,9 +442,15 @@
             }
         }
 
-        if (changed) {
+        // Sync lastRawGamepadState with current AndroidBridge state so pollFromAndroid doesn't double-parse
+        if (window.AndroidBridge && window.AndroidBridge.getGamepadState) {
+            try {
+                lastRawGamepadState = window.AndroidBridge.getGamepadState() || "";
+            } catch (e) {}
+        }
+
+        if (changed || hasActiveInput) {
             currentGamepadSnapshot = buildGamepadSnapshot();
-            window.__virtualGamepad = currentGamepadSnapshot;
         }
 
         if (hasActiveInput) {
@@ -289,28 +459,13 @@
         dispatchGamepadConnected(false);
     };
 
-    // Override navigator.getGamepads to return standard 4-port XInput array [pad0, null, null, null]
-    // so Resident Evil 2 / 3 (RE Engine) always binds the virtual controller to Player 1 (Slot 0)
-    // without phantom Android sensor devices hijacking Slot 0.
-    const origGetGamepads = navigator.getGamepads ? navigator.getGamepads.bind(navigator) : null;
-
+    // Override navigator.getGamepads to return ONLY the standard 4-port XInput array [virtualGamepad, null, null, null].
+    // Never include origGetGamepads() devices because Android built-in sensors (fingerprint/gyro/keypad)
+    // register as extra controllers, causing Resident Evil 2 / 3 to halt with "Press A on the controller you want to use".
     function virtualGetGamepads() {
         pollFromAndroid();
         dispatchGamepadConnected(false);
-        const result = [currentGamepadSnapshot, null, null, null];
-        if (origGetGamepads) {
-            try {
-                const physical = origGetGamepads();
-                let nextSlot = 1;
-                for (let i = 0; i < physical.length && nextSlot < 4; i++) {
-                    const p = physical[i];
-                    if (p && p.connected && p.mapping === "standard" && p.buttons && p.buttons.length >= 12) {
-                        result[nextSlot++] = p;
-                    }
-                }
-            } catch (e) {}
-        }
-        return result;
+        return [currentGamepadSnapshot, null, null, null];
     }
 
     try {
@@ -342,23 +497,22 @@
         });
     } catch (e) {}
 
-    // Dispatch connected after page load, user interaction, or SPA route transitions
-    window.addEventListener('DOMContentLoaded', () => setTimeout(() => dispatchGamepadConnected(true), 300));
-    window.addEventListener('load', () => setTimeout(() => dispatchGamepadConnected(true), 600));
-    window.addEventListener('popstate', () => setTimeout(() => dispatchGamepadConnected(true), 200));
-    window.addEventListener('pointerdown', () => dispatchGamepadConnected(false), { passive: true });
-    window.addEventListener('touchstart', () => dispatchGamepadConnected(false), { passive: true });
-    window.addEventListener('keydown', () => dispatchGamepadConnected(false), { passive: true });
+    // Dispatch connected once on initial load and when SPA route changes into /play/launch/...
+    window.addEventListener('DOMContentLoaded', () => setTimeout(() => dispatchGamepadConnected(false), 300));
+    window.addEventListener('load', () => setTimeout(() => dispatchGamepadConnected(false), 600));
+    window.addEventListener('popstate', () => setTimeout(() => dispatchGamepadConnected(false), 200));
 
     // Hook History API pushState / replaceState so SPA transitions into /play/launch/...
-    // immediately announce the controller to the newly mounted game stream session
+    // announce the controller cleanly if the pathname changed
     try {
         const origPushState = history.pushState;
         if (origPushState) {
             history.pushState = function(...args) {
                 const res = origPushState.apply(this, args);
-                setTimeout(() => dispatchGamepadConnected(true), 300);
-                setTimeout(() => dispatchGamepadConnected(true), 1500);
+                setTimeout(() => {
+                    ensureStreamActiveFocus();
+                    dispatchGamepadConnected(false);
+                }, 300);
                 return res;
             };
         }
@@ -366,20 +520,15 @@
         if (origReplaceState) {
             history.replaceState = function(...args) {
                 const res = origReplaceState.apply(this, args);
-                setTimeout(() => dispatchGamepadConnected(true), 300);
+                setTimeout(() => dispatchGamepadConnected(false), 300);
                 return res;
             };
         }
     } catch (e) {}
 
-    // Continuous heartbeat to ensure game stream recognizes controller across session launches
+    // Continuous heartbeat to ensure game stream stays focused and recognizes controller on route transitions
     setInterval(() => {
-        const href = (window.location && window.location.href) ? window.location.href : "";
-        if (href !== lastConnectedHref) {
-            dispatchGamepadConnected(true);
-        } else {
-            dispatchGamepadConnected(false);
-        }
+        dispatchGamepadConnected(false);
     }, 1500);
 
     // =========================================================================
@@ -390,6 +539,7 @@
     // 1. Prevent background tab/visibility frame throttling, enforce document.hasFocus(), & spoof Desktop 60fps capabilities
     try {
         Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
+        Object.defineProperty(document, 'webkitHidden', { get: () => false, configurable: true });
         Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
         Object.defineProperty(document, 'webkitVisibilityState', { get: () => 'visible', configurable: true });
         document.hasFocus = function() { return true; };
@@ -862,11 +1012,11 @@
 
                 applyVisualEnhancementsToVideo(v);
                 ensureStreamActiveFocus();
-                dispatchGamepadConnected(true);
+                dispatchGamepadConnected(false);
 
                 v.addEventListener('playing', () => {
                     ensureStreamActiveFocus();
-                    dispatchGamepadConnected(true);
+                    dispatchGamepadConnected(false);
                 });
 
                 // Calculate real decoded stream FPS only when FPS counter is wanted
