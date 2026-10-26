@@ -81,9 +81,7 @@
         };
     }
 
-    // Persistent standard XInput virtual gamepad object (Slot 0).
-    // IMPORTANT: Keep as a plain JS object (do NOT set Gamepad.prototype, which causes
-    // Chromium WebIDL 'Illegal invocation' errors when unshadowed getters are accessed).
+    // Persistent reference used for gamepadconnected event.gamepad
     const virtualGamepad = {
         id: "Xbox 360 Controller (XInput STANDARD GAMEPAD)",
         index: 0,
@@ -96,13 +94,13 @@
         hapticActuators: []
     };
 
-    // Allow `virtualGamepad instanceof Gamepad` checks to succeed safely without prototype pollution
+    // Allow `snapshot instanceof Gamepad` checks to succeed safely without prototype pollution
     try {
         if (window.Gamepad && typeof Symbol !== 'undefined' && Symbol.hasInstance) {
             const origHasInstance = Function.prototype[Symbol.hasInstance];
             Object.defineProperty(window.Gamepad, Symbol.hasInstance, {
                 value: function(instance) {
-                    if (instance === virtualGamepad) return true;
+                    if (instance && (instance === virtualGamepad || instance.id === virtualGamepad.id)) return true;
                     return origHasInstance ? origHasInstance.call(this, instance) : false;
                 },
                 configurable: true
@@ -110,24 +108,53 @@
         }
     } catch (e) {}
 
+    // Build a fresh plain-JS Gamepad snapshot on every state change!
+    // CRITICAL: Never mutate the previously returned snapshot in-place!
+    // Xbox Cloud Gaming stores `this.lastGamepad = navigator.getGamepads()[0]` on Frame N
+    // and compares `this.lastGamepad` against `currentPad` on Frame N+1.
+    // Mutating in-place on release (1 -> 0) overwrites `this.lastGamepad` to 0 before Frame N+1 runs,
+    // causing xCloud to miss the release edge and keep scrolling forever.
     function buildGamepadSnapshot() {
-        virtualGamepad.timestamp = nextMonotonicTimestamp();
+        const ts = nextMonotonicTimestamp();
+        const buttonsSnap = new Array(17);
         for (let i = 0; i < 17; i++) {
             const numVal = Number(rawButtons[i]) || 0.0;
-            const btn = virtualGamepad.buttons[i];
-            btn.pressed = numVal > 0.1;
-            btn.touched = numVal > 0.0;
-            btn.value = numVal;
+            buttonsSnap[i] = createButtonSnapshot(numVal);
+
+            const liveBtn = virtualGamepad.buttons[i];
+            liveBtn.pressed = numVal > 0.1;
+            liveBtn.touched = numVal > 0.0;
+            liveBtn.value = numVal;
         }
-        virtualGamepad.axes[0] = Number(rawAxes[0]) || 0.0;
-        virtualGamepad.axes[1] = Number(rawAxes[1]) || 0.0;
-        virtualGamepad.axes[2] = Number(rawAxes[2]) || 0.0;
-        virtualGamepad.axes[3] = Number(rawAxes[3]) || 0.0;
-        return virtualGamepad;
+
+        const ax0 = Number(rawAxes[0]) || 0.0;
+        const ax1 = Number(rawAxes[1]) || 0.0;
+        const ax2 = Number(rawAxes[2]) || 0.0;
+        const ax3 = Number(rawAxes[3]) || 0.0;
+        const axesSnap = [ax0, ax1, ax2, ax3];
+
+        virtualGamepad.axes[0] = ax0;
+        virtualGamepad.axes[1] = ax1;
+        virtualGamepad.axes[2] = ax2;
+        virtualGamepad.axes[3] = ax3;
+        virtualGamepad.timestamp = ts;
+
+        const snapshot = {
+            id: "Xbox 360 Controller (XInput STANDARD GAMEPAD)",
+            index: 0,
+            connected: true,
+            timestamp: ts,
+            mapping: "standard",
+            axes: axesSnap,
+            buttons: buttonsSnap,
+            vibrationActuator: vibrationActuator,
+            hapticActuators: []
+        };
+        window.__virtualGamepad = snapshot;
+        return snapshot;
     }
 
     let currentGamepadSnapshot = buildGamepadSnapshot();
-    window.__virtualGamepad = virtualGamepad;
 
     // Override navigator.vibrate so any web/game stream calls respect the vibration setting
     const _origVibrate = navigator.vibrate ? navigator.vibrate.bind(navigator) : null;
@@ -419,10 +446,30 @@
         }
     }
 
-    // Direct fast-path called from Kotlin evaluateJavascript for instant reaction
+    // Direct fast-path called from Kotlin evaluateJavascript for instant reaction.
+    // When AndroidBridge is available, always pull from the atomic AndroidBridge.getGamepadState()
+    // single source of truth so queued IPC move events can never overwrite a newer release state.
     window.onControllerInput = function(buttons, axes) {
+        if (window.AndroidBridge && typeof window.AndroidBridge.getGamepadState === 'function') {
+            lastRawGamepadState = "";
+            pollFromAndroid();
+            for (let i = 0; i < 17; i++) {
+                if (rawButtons[i] > 0.05) {
+                    ensureStreamActiveFocus();
+                    break;
+                }
+            }
+            for (let i = 0; i < 4; i++) {
+                if (Math.abs(rawAxes[i]) > 0.05) {
+                    ensureStreamActiveFocus();
+                    break;
+                }
+            }
+            dispatchGamepadConnected(false);
+            return;
+        }
+
         const now = performance.now();
-        // Force next pollFromAndroid() to re-verify against live AndroidBridge state
         lastRawGamepadState = "";
         let changed = false;
         let hasActiveInput = false;
