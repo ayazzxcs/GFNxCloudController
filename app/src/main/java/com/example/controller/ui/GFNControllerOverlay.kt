@@ -851,25 +851,34 @@ fun AnalogThumbStick(
                         releaseStartOffset = clampedOffset
 
                         val rawNorm = (clampedDistance / maxTravelRadius).coerceIn(0f, 1f)
+                        val rawX: Float
+                        val rawY: Float
                         if (gfnCurveEnabled) {
                             // GeForce NOW Reflex Stick Response Curve:
-                            // 1. Inner deadzone (0.04) prevents resting finger micro-jitter / camera drift
+                            // 1. Inner deadzone (0.12) prevents resting finger micro-jitter / menu auto-scroll
                             // 2. Progressive non-linear acceleration (power 1.15) provides surgical precision
                             //    for micro-aiming while accelerating smoothly to 100% velocity at full deflection
-                            val deadZone = 0.04f
+                            val deadZone = 0.12f
                             val calibratedNorm = if (rawNorm > deadZone) {
                                 val scaled = (rawNorm - deadZone) / (1f - deadZone)
                                 scaled.pow(1.15f).coerceIn(0f, 1f)
                             } else 0f
 
-                            val normX = if (rawNorm > 0f) (cos(angle) * calibratedNorm).coerceIn(-1f, 1f) else 0f
-                            val normY = if (rawNorm > 0f) (sin(angle) * calibratedNorm).coerceIn(-1f, 1f) else 0f
-                            currentOnStickMove(normX, normY)
+                            rawX = if (rawNorm > 0f) (cos(angle) * calibratedNorm).coerceIn(-1f, 1f) else 0f
+                            rawY = if (rawNorm > 0f) (sin(angle) * calibratedNorm).coerceIn(-1f, 1f) else 0f
                         } else {
-                            val normX = (clampedOffset.x / maxTravelRadius).coerceIn(-1f, 1f)
-                            val normY = (clampedOffset.y / maxTravelRadius).coerceIn(-1f, 1f)
-                            currentOnStickMove(normX, normY)
+                            val deadZone = 0.12f
+                            if (rawNorm > deadZone) {
+                                rawX = (clampedOffset.x / maxTravelRadius).coerceIn(-1f, 1f)
+                                rawY = (clampedOffset.y / maxTravelRadius).coerceIn(-1f, 1f)
+                            } else {
+                                rawX = 0f
+                                rawY = 0f
+                            }
                         }
+                        val normX = if (kotlin.math.abs(rawX) < 0.08f) 0f else ((rawX * 50f).roundToInt() / 50f).coerceIn(-1f, 1f)
+                        val normY = if (kotlin.math.abs(rawY) < 0.08f) 0f else ((rawY * 50f).roundToInt() / 50f).coerceIn(-1f, 1f)
+                        currentOnStickMove(normX, normY)
                     }
 
                     try {
