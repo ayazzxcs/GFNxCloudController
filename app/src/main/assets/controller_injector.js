@@ -25,9 +25,9 @@
 
     console.log("[GFNxCloud] Initializing virtual Xbox controller injector...");
 
-    // Minimum hold duration (ms) for rapid touchscreen taps so 60Hz xCloud + RE Engine
-    // input polling never misses a sub-frame tap between requestAnimationFrame ticks.
-    const MIN_BUTTON_HOLD_MS = 75;
+    // Minimum hold duration (ms) for sub-frame touchscreen taps so 60Hz xCloud + RE Engine
+    // input polling never misses a quick tap, without triggering menu auto-repeat.
+    const MIN_BUTTON_HOLD_MS = 45;
 
     // Raw internal controller state (17 standard XInput buttons, 4 axes)
     const rawButtons = new Float32Array(17);
@@ -232,7 +232,7 @@
         });
     } catch (e) {}
 
-    // Intercept addEventListener on Window and EventTarget so:
+    // Intercept addEventListener on Window and Document so:
     // 1. 'blur' and 'visibilitychange' listeners never pause xCloud's input loop
     // 2. Any new 'gamepadconnected' listener attached when launching Resident Evil immediately
     //    receives the virtualGamepad connection event once.
@@ -244,11 +244,12 @@
             }
             const res = origWindowAddEventListener(type, listener, options);
             if (type === "gamepadconnected" && listener) {
-                const alreadyNotified = notifiedListeners && typeof listener === "object" || typeof listener === "function"
+                const isObjOrFn = typeof listener === "function" || typeof listener === "object";
+                const alreadyNotified = (notifiedListeners && isObjOrFn)
                     ? notifiedListeners.has(listener)
                     : false;
                 if (!alreadyNotified) {
-                    if (notifiedListeners && (typeof listener === "function" || typeof listener === "object")) {
+                    if (notifiedListeners && isObjOrFn) {
                         notifiedListeners.add(listener);
                     }
                     setTimeout(() => {
@@ -303,14 +304,13 @@
         } catch (e) {}
     }
 
-    // Update a single button with minimum hold duration guarantee so rapid touchscreen taps
-    // stay pressed across at least MIN_BUTTON_HOLD_MS (~5 frames at 60Hz).
+    // Update a single button with minimum hold duration guarantee so ultra-short touchscreen taps
+    // stay pressed across MIN_BUTTON_HOLD_MS (~3 frames at 60Hz) and then reliably release to 0.
     function updateButtonWithHoldLatch(index, targetVal, now) {
         const cleanVal = Number(targetVal) || 0.0;
         desiredButtons[index] = cleanVal;
 
         if (cleanVal > 0.1) {
-            // Button pressed or analog trigger engaged
             if (buttonReleaseTimers[index] !== null) {
                 clearTimeout(buttonReleaseTimers[index]);
                 buttonReleaseTimers[index] = null;
@@ -324,13 +324,12 @@
             }
             return false;
         } else {
-            // Button released: check if minimum hold window is still active
             const remainingHold = buttonHoldUntil[index] - now;
             if (rawButtons[index] > 0.1 && remainingHold > 1) {
                 if (buttonReleaseTimers[index] === null) {
                     buttonReleaseTimers[index] = setTimeout(() => {
                         buttonReleaseTimers[index] = null;
-                        if (desiredButtons[index] <= 0.1) {
+                        if (desiredButtons[index] <= 0.1 && rawButtons[index] !== 0.0) {
                             rawButtons[index] = 0.0;
                             currentGamepadSnapshot = buildGamepadSnapshot();
                         }
@@ -338,6 +337,10 @@
                 }
                 return false;
             } else {
+                if (buttonReleaseTimers[index] !== null) {
+                    clearTimeout(buttonReleaseTimers[index]);
+                    buttonReleaseTimers[index] = null;
+                }
                 if (Math.abs(rawButtons[index] - cleanVal) > 0.0001) {
                     rawButtons[index] = cleanVal;
                     return true;
@@ -362,8 +365,10 @@
         return changed;
     }
 
-    // Synchronize latest state directly from AndroidBridge if available
+    // Synchronize latest state directly from AndroidBridge on every poll
+    const ZERO_STATE_JSON = '{"b":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"a":[0,0,0,0]}';
     let lastRawGamepadState = "";
+
     function pollFromAndroid() {
         const now = performance.now();
         let changed = flushExpiredButtonHolds(now);
@@ -371,7 +376,22 @@
         if (window.AndroidBridge && window.AndroidBridge.getGamepadState) {
             try {
                 const raw = window.AndroidBridge.getGamepadState();
-                if (raw && raw !== lastRawGamepadState) {
+                if (raw === ZERO_STATE_JSON) {
+                    // Fast self-healing zero path: whenever Android reports all buttons/axes released,
+                    // guarantee desiredButtons and rawAxes are 0 so no button or stick can ever stick!
+                    lastRawGamepadState = raw;
+                    for (let i = 0; i < 17; i++) {
+                        if (updateButtonWithHoldLatch(i, 0.0, now)) {
+                            changed = true;
+                        }
+                    }
+                    for (let i = 0; i < 4; i++) {
+                        if (Math.abs(rawAxes[i]) > 0.0001) {
+                            rawAxes[i] = 0.0;
+                            changed = true;
+                        }
+                    }
+                } else if (raw && raw !== lastRawGamepadState) {
                     lastRawGamepadState = raw;
                     const state = JSON.parse(raw);
                     if (state.b) {
@@ -394,24 +414,7 @@
             } catch (e) {}
         }
 
-        // Check if any button or stick is actively held so timestamp advances every frame during hold
-        let anyActive = false;
-        for (let i = 0; i < 17; i++) {
-            if (rawButtons[i] > 0.01) {
-                anyActive = true;
-                break;
-            }
-        }
-        if (!anyActive) {
-            for (let i = 0; i < 4; i++) {
-                if (Math.abs(rawAxes[i]) > 0.01) {
-                    anyActive = true;
-                    break;
-                }
-            }
-        }
-
-        if (changed || anyActive) {
+        if (changed) {
             currentGamepadSnapshot = buildGamepadSnapshot();
         }
     }
@@ -419,6 +422,8 @@
     // Direct fast-path called from Kotlin evaluateJavascript for instant reaction
     window.onControllerInput = function(buttons, axes) {
         const now = performance.now();
+        // Force next pollFromAndroid() to re-verify against live AndroidBridge state
+        lastRawGamepadState = "";
         let changed = false;
         let hasActiveInput = false;
 
@@ -442,14 +447,7 @@
             }
         }
 
-        // Sync lastRawGamepadState with current AndroidBridge state so pollFromAndroid doesn't double-parse
-        if (window.AndroidBridge && window.AndroidBridge.getGamepadState) {
-            try {
-                lastRawGamepadState = window.AndroidBridge.getGamepadState() || "";
-            } catch (e) {}
-        }
-
-        if (changed || hasActiveInput) {
+        if (changed) {
             currentGamepadSnapshot = buildGamepadSnapshot();
         }
 

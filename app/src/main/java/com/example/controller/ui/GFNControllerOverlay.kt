@@ -408,14 +408,17 @@ fun CircularGamepadButton(
                     onPressChange(true)
                     val pointerId = down.id
 
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull { it.id == pointerId }
-                        if (change == null || !change.pressed) {
-                            onPressChange(false)
-                            break
+                    try {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == pointerId }
+                            if (change == null || !change.pressed) {
+                                break
+                            }
+                            change.consume()
                         }
-                        change.consume()
+                    } finally {
+                        onPressChange(false)
                     }
                 }
             }
@@ -460,14 +463,17 @@ fun ChevronGamepadButton(
                     onPressChange(true)
                     val pointerId = down.id
 
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull { it.id == pointerId }
-                        if (change == null || !change.pressed) {
-                            onPressChange(false)
-                            break
+                    try {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == pointerId }
+                            if (change == null || !change.pressed) {
+                                break
+                            }
+                            change.consume()
                         }
-                        change.consume()
+                    } finally {
+                        onPressChange(false)
                     }
                 }
             }
@@ -545,14 +551,17 @@ fun PillIconButton(
                     onPressChange(true)
                     val pointerId = down.id
 
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull { it.id == pointerId }
-                        if (change == null || !change.pressed) {
-                            onPressChange(false)
-                            break
+                    try {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == pointerId }
+                            if (change == null || !change.pressed) {
+                                break
+                            }
+                            change.consume()
                         }
-                        change.consume()
+                    } finally {
+                        onPressChange(false)
                     }
                 }
             }
@@ -608,16 +617,23 @@ fun GfnGamepadMenuButton(
                     down.consume()
                     onPressChange(true)
                     val pointerId = down.id
+                    var releasedCleanly = false
 
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull { it.id == pointerId }
-                        if (change == null || !change.pressed) {
-                            onPressChange(false)
-                            onOpenSettings()
-                            break
+                    try {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == pointerId }
+                            if (change == null || !change.pressed) {
+                                releasedCleanly = true
+                                break
+                            }
+                            change.consume()
                         }
-                        change.consume()
+                    } finally {
+                        onPressChange(false)
+                        if (releasedCleanly) {
+                            onOpenSettings()
+                        }
                     }
                 }
             }
@@ -841,19 +857,22 @@ fun AnalogThumbStick(
                         }
                     }
 
-                    updatePosition(down.position)
+                    try {
+                        updatePosition(down.position)
 
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull { it.id == pointerId }
-                        if (change == null || !change.pressed) {
-                            isDragging = false
-                            rawOffset = Offset.Zero
-                            onStickMove(0f, 0f)
-                            break
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == pointerId }
+                            if (change == null || !change.pressed) {
+                                break
+                            }
+                            change.consume()
+                            updatePosition(change.position)
                         }
-                        change.consume()
-                        updatePosition(change.position)
+                    } finally {
+                        isDragging = false
+                        rawOffset = Offset.Zero
+                        onStickMove(0f, 0f)
                     }
                 }
             }
