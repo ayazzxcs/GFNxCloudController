@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan to fix the virtual on-screen controller not registering inputs at the title screen and during gameplay in Resident Evil 2 and Resident Evil 3 on Xbox Cloud Gaming.",
-  "updatedAt":  "2026-10-26T08:08:18.564196742Z",
+  "summary":  "Implementation plan to eliminate controller lag and stop unwanted menu scrolling on both the D-Pad and Left Joystick on Samsung Galaxy M56 while preserving the Resident Evil 2 title screen fix and Xbox login session.",
+  "updatedAt":  "2026-10-26T13:29:02.311400302Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

@@ -173,23 +173,23 @@ class MainActivity : ComponentActivity() {
             e.printStackTrace()
         }
 
-        // Bridge state changes to WebView via evaluateJavascript (Ordered Exact-State IPC Path)
-        stateManager.onStateChanged = { snap ->
-            val exactArgs = snap.fastJsArgs
-            runOnUiThread {
-                webViewInstance?.let { wv ->
-                    if (!wv.hasFocus()) {
-                        wv.requestFocus()
-                    }
-                    wv.evaluateJavascript(
-                        "window.onControllerInput ? (window.onControllerInput($exactArgs), true) : false;"
-                    ) { result ->
-                        if (result != "true") {
-                            injectController(wv, wv.url)
-                            wv.evaluateJavascript(
-                                "window.onControllerInput && window.onControllerInput($exactArgs);",
-                                null
-                            )
+        // Wake WebView focus on discrete button press edges without flooding IPC on stick drags
+        var lastWakeTimeMs = 0L
+        stateManager.onButtonPressEdge = { _ ->
+            val now = android.os.SystemClock.uptimeMillis()
+            if (now - lastWakeTimeMs >= 250L) {
+                lastWakeTimeMs = now
+                runOnUiThread {
+                    webViewInstance?.let { wv ->
+                        if (!wv.hasFocus()) {
+                            wv.requestFocus()
+                        }
+                        wv.evaluateJavascript(
+                            "window.__GFN_CONTROLLER_INJECTED__ ? (window.onControllerWake && window.onControllerWake(), true) : false;"
+                        ) { result ->
+                            if (result != "true") {
+                                injectController(wv, wv.url)
+                            }
                         }
                     }
                 }

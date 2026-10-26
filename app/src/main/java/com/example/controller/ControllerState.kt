@@ -106,19 +106,25 @@ data class GamepadSnapshot(
 class ControllerStateManager {
     private val stateRef = AtomicReference(GamepadSnapshot())
     var onStateChanged: ((GamepadSnapshot) -> Unit)? = null
+    var onButtonPressEdge: ((Int) -> Unit)? = null
 
     fun getSnapshot(): GamepadSnapshot = stateRef.get()
 
     fun setButton(buttonIndex: Int, value: Float) {
         if (buttonIndex !in 0 until 17) return
         val current = stateRef.get()
-        if (current.buttons[buttonIndex] == value) return
+        val coerced = value.coerceIn(0f, 1f)
+        val prev = current.buttons[buttonIndex]
+        if (prev == coerced) return
 
         val newButtons = current.buttons.clone()
-        newButtons[buttonIndex] = value.coerceIn(0f, 1f)
+        newButtons[buttonIndex] = coerced
         val newSnapshot = current.copy(buttons = newButtons)
         stateRef.set(newSnapshot)
         onStateChanged?.invoke(newSnapshot)
+        if (prev <= 0.1f && coerced > 0.1f) {
+            onButtonPressEdge?.invoke(buttonIndex)
+        }
     }
 
     fun setButton(buttonIndex: Int, pressed: Boolean) {
